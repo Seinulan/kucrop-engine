@@ -1,0 +1,4 @@
+node_modules/
+temp_poltavka.txt
+.env
+*.log

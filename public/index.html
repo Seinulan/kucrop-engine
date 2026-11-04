@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KUCrop Web Engine (СКО)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> 
+        body { font-family: 'Inter', sans-serif; } 
+        .tab-btn { transition: all 0.2s ease; cursor: pointer; }
+        .tab-btn.active { color: #f59e0b; border-bottom: 2px solid #f59e0b; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-4xl w-full bg-slate-800/90 backdrop-blur-md rounded-2xl p-6 sm:p-8 border border-slate-700 shadow-2xl my-6">
+        
+        <div class="flex items-center space-x-3 mb-6 border-b border-slate-700 pb-4">
+            <div class="bg-amber-500/20 p-3 rounded-xl border border-amber-500/30 text-2xl">🌾</div>
+            <div>
+                <h1 class="text-2xl font-bold text-white">KUCrop Engine</h1>
+                <p class="text-slate-400 text-sm">Физическое моделирование & ИИ (Poltavka.CLI, SOL, GWT, CRO)</p>
+            </div>
+        </div>
+
+        <form id="predictForm" class="space-y-5 mb-8">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Культура (Crop)</label>
+                    <select id="crop" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                        <option value="Sunflower" selected>Подсолнечник (Sunflower)</option>
+                        <option value="Wheat">Яровая пшеница (Wheat)</option>
+                        <option value="Barley">Ячмень (Barley)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Управление (Management)</label>
+                    <select id="irrigation" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                        <option value="Rainfed" selected>Богара (Rainfed cropping)</option>
+                        <option value="Irrigated">Орошение (Irrigation)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Начало посева</label>
+                    <input type="date" id="startDate" value="2024-05-25" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Уборка урожая</label>
+                    <input type="date" id="endDate" value="2024-09-01" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Профиль почвы (Soil)</label>
+                    <select id="soil" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                        <option value="ClayLoam" selected>Poltavka_NKA (Clay Loam)</option>
+                        <option value="Loam">Суглинок (Loam)</option>
+                        <option value="SandyLoam">Песчаный суглинок (Sandy Loam)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Уровень грунтовых вод</label>
+                    <select id="gwDepth" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-200 focus:ring-2 focus:ring-amber-500">
+                        <option value="1.70" selected>1.70 м (Poltavka_0712.GWT)</option>
+                        <option value="3.00">3.00 м (Средний)</option>
+                        <option value="10.00">10.00 м (Без подпита)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Начальная влажность почвы</label>
+                    <span id="waterLabel" class="text-amber-400 font-bold text-sm">Field Capacity (FC)</span>
+                </div>
+                <input type="range" id="waterRange" min="0.25" max="1.0" step="0.25" value="1.0" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-500">
+            </div>
+
+            <button type="submit" id="submitBtn" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-3.5 px-6 rounded-xl shadow-lg shadow-amber-900/30 transition-all flex justify-center items-center">
+                <span>Запустить симуляцию (Run Simulation)</span>
+            </button>
+        </form>
+
+        <div id="resultSection" class="hidden space-y-6">
+            
+            <div id="resultCard" class="p-6 bg-slate-900/90 rounded-xl border border-amber-500/30 text-center">
+                <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold mb-2">Спрогнозированная урожайность</p>
+                <div class="flex items-center justify-center space-x-6 my-3">
+                    <div>
+                        <span class="text-xs text-slate-400 block mb-1">Физическая модель KUCrop</span>
+                        <div class="text-3xl font-extrabold text-amber-400" id="yieldResult">--</div>
+                    </div>
+                    <div class="h-10 w-px bg-slate-700"></div>
+                    <div>
+                        <span class="text-xs text-emerald-400 font-semibold block mb-1 flex items-center justify-center gap-1">
+                            <span>🤖</span> ИИ Предсказание (ONNX)
+                        </span>
+                        <div class="text-3xl font-extrabold text-emerald-400" id="aiYieldResult">--</div>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 mt-2" id="detailsResult">Локация: Полтавка (СКО)</p>
+            </div>
+
+            <div class="flex flex-wrap gap-2 border-b border-slate-700 pb-2 text-sm overflow-x-auto">
+                <button class="tab-btn active px-3 pb-2 text-slate-400" onclick="switchTab('cropTab', this)">Climate-Crop-Soil water</button>
+                <button class="tab-btn px-3 pb-2 text-slate-400" onclick="switchTab('rainTab', this)">Rain</button>
+                <button class="tab-btn px-3 pb-2 text-slate-400" onclick="switchTab('waterBalanceTab', this)">Water balance</button>
+                <button class="tab-btn px-3 pb-2 text-slate-400" onclick="switchTab('productionTab', this)">Production</button>
+                <button class="tab-btn px-3 pb-2 text-slate-400" onclick="switchTab('envTab', this)">Environment</button>
+            </div>
+
+            <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700">
+                
+                <div id="cropTab" class="tab-content">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Развитие кроны (Canopy Cover) & Транспирация</h3>
+                    <div class="relative h-72 w-full">
+                        <canvas id="canopyChart"></canvas>
+                    </div>
+                </div>
+
+                <div id="rainTab" class="tab-content hidden">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Ежедневные осадки (Rainfall, mm/day)</h3>
+                    <div class="relative h-72 w-full">
+                        <canvas id="rainChart"></canvas>
+                    </div>
+                </div>
+
+                <div id="waterBalanceTab" class="tab-content hidden">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Баланс почвенной влаги (Soil Water Balance)</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 block">Осадки (Rain)</span>
+                            <span class="text-lg font-bold text-sky-400" id="wbRain">0 mm</span>
+                        </div>
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 block">Инфильтрация</span>
+                            <span class="text-lg font-bold text-emerald-400" id="wbInf">0 mm</span>
+                        </div>
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 block">Транспирация (Tr)</span>
+                            <span class="text-lg font-bold text-teal-400" id="wbTr">0 mm</span>
+                        </div>
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 block">Испарение (E)</span>
+                            <span class="text-lg font-bold text-amber-400" id="wbE">0 mm</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="productionTab" class="tab-content hidden">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Формирование биомассы и урожая (Production)</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                            <p class="text-xs text-slate-400 mb-1">Фактическая биомасса (Dry Biomass)</p>
+                            <p class="text-2xl font-bold text-amber-400" id="bmActual">0 ton/ha</p>
+                        </div>
+                        <div class="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                            <p class="text-xs text-slate-400 mb-1">Индекс уборки (Harvest Index - HI)</p>
+                            <p class="text-2xl font-bold text-emerald-400" id="bmHI">32.0 %</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="envTab" class="tab-content hidden">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Загруженные конфигурационные файлы KUCrop</h3>
+                    <div class="text-xs font-mono space-y-2 text-slate-300 bg-slate-950 p-4 rounded-lg border border-slate-800">
+                        <p><span class="text-amber-500">Climate:</span> Poltavka.CLI (Tnx, ETo, PLU)</p>
+                        <p><span class="text-amber-500">Crop Profile:</span> Sunflower.CRO / Wheat.CRO / Barley.CRO</p>
+                        <p><span class="text-amber-500">Management:</span> final_2.MAN</p>
+                        <p><span class="text-amber-500">Soil Profile:</span> Poltavka_NKA.SOL (Clay Loam)</p>
+                        <p><span class="text-amber-500">Groundwater:</span> Poltavka_0712.GWT (1.70 m constant)</p>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <script>
+        let canopyChartInstance = null;
+        let rainChartInstance = null;
+
+        document.getElementById('waterRange').addEventListener('input', function(e) {
+            const label = document.getElementById('waterLabel');
+            if (parseFloat(e.target.value) <= 0.25) {
+                label.textContent = 'Wilting Point (WP)';
+                label.className = 'text-red-400 font-bold text-sm';
+            } else {
+                label.textContent = 'Field Capacity (FC)';
+                label.className = 'text-amber-400 font-bold text-sm';
+            }
+        });
+
+        function switchTab(tabId, btn) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('active', 'text-amber-500', 'border-amber-500');
+                el.classList.add('text-slate-400');
+            });
+
+            document.getElementById(tabId).classList.remove('hidden');
+            btn.classList.add('active', 'text-amber-500');
+            btn.classList.remove('text-slate-400');
+        }
+
+        document.getElementById('predictForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerText = "Расчет симуляции KUCrop...";
+
+            const waterVal = parseFloat(document.getElementById('waterRange').value);
+            const initWaterVal = waterVal <= 0.25 ? 'WP' : 'FC';
+
+            const payload = {
+                crop: document.getElementById('crop').value,
+                irrigation: document.getElementById('irrigation').value,
+                startDate: document.getElementById('startDate').value.replace(/-/g, '/'),
+                endDate: document.getElementById('endDate').value.replace(/-/g, '/'),
+                soil: document.getElementById('soil').value,
+                gwDepth: document.getElementById('gwDepth').value,
+                initWater: initWaterVal
+            };
+
+            try {
+                const response = await fetch('/api/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('yieldResult').textContent = `${data.yield_tonne_ha} т/га`;
+                    document.getElementById('aiYieldResult').textContent = `${data.ai_yield || data.yield_tonne_ha} т/га`;
+                    document.getElementById('detailsResult').textContent = `Локация: ${data.location || 'Полтавка (СКО)'} | Период: ${data.period} | Влажность: ${initWaterVal}`;
+                    
+                    if (data.water_balance) {
+                        document.getElementById('wbRain').textContent = `${data.water_balance.rain || 0} mm`;
+                        document.getElementById('wbInf').textContent = `${data.water_balance.infiltrated || 0} mm`;
+                        document.getElementById('wbTr').textContent = `${data.water_balance.transpiration || 0} mm`;
+                        document.getElementById('wbE').textContent = `${data.water_balance.evaporation || 0} mm`;
+                    }
+
+                    if (data.production_details) {
+                        document.getElementById('bmActual').textContent = `${data.production_details.actual_biomass || 0} ton/ha`;
+                        document.getElementById('bmHI').textContent = `${data.production_details.harvest_index || 32.0} %`;
+                    }
+
+                    if (data.charts) {
+                        const days = data.charts.days;
+
+                        if (canopyChartInstance) canopyChartInstance.destroy();
+                        if (rainChartInstance) rainChartInstance.destroy();
+
+                        const ctxCanopy = document.getElementById('canopyChart').getContext('2d');
+                        canopyChartInstance = new Chart(ctxCanopy, {
+                            type: 'line',
+                            data: {
+                                labels: days,
+                                datasets: [
+                                    {
+                                        label: 'Canopy Cover (CC, %)',
+                                        data: data.charts.canopy_cover,
+                                        borderColor: '#22c55e',
+                                        backgroundColor: 'rgba(34, 197, 94, 0.2)',
+                                        fill: true,
+                                        tension: 0.3,
+                                        yAxisID: 'y'
+                                    },
+                                    {
+                                        label: 'Transpiration (Tr, mm/day)',
+                                        data: data.charts.transpiration,
+                                        borderColor: '#06b6d4',
+                                        backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                                        borderDash: [4, 4],
+                                        fill: false,
+                                        tension: 0.3,
+                                        yAxisID: 'y1'
+                                    }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    y: {
+                                        type: 'linear',
+                                        display: true,
+                                        position: 'left',
+                                        min: 0,
+                                        max: 100,
+                                        title: { display: true, text: 'Canopy Cover (%)', color: '#22c55e' },
+                                        grid: { color: '#334155' }
+                                    },
+                                    y1: {
+                                        type: 'linear',
+                                        display: true,
+                                        position: 'right',
+                                        min: 0,
+                                        max: 10,
+                                        title: { display: true, text: 'Tr (mm/day)', color: '#06b6d4' },
+                                        grid: { drawOnChartArea: false }
+                                    },
+                                    x: { grid: { color: '#334155' } }
+                                }
+                            }
+                        });
+
+                        const ctxRain = document.getElementById('rainChart').getContext('2d');
+                        rainChartInstance = new Chart(ctxRain, {
+                            type: 'bar',
+                            data: {
+                                labels: days,
+                                datasets: [{
+                                    label: 'Precipitation (mm/day)',
+                                    data: data.charts.rain,
+                                    backgroundColor: '#3b82f6'
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    y: { beginAtZero: true, grid: { color: '#334155' } },
+                                    x: { grid: { color: '#334155' } }
+                                }
+                            }
+                        });
+                    }
+
+                    document.getElementById('resultSection').classList.remove('hidden');
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            } catch (err) {
+                alert('Ошибка соединения с сервером');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = "Запустить симуляцию (Run Simulation)";
+            }
+        });
+    </script>
+</body>
+</html>
