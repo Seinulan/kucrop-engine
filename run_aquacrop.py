@@ -7,6 +7,7 @@ run_aquacrop.py - физический расчёт KUCrop (AquaCrop-OSPy), вы
   python run_aquacrop.py --config     # справочники и значения по умолчанию из файлов (для /api/config)
   python run_aquacrop.py --inspect    # все файлы AquaCrop в проекте и что из них прочитано
   python run_aquacrop.py --validate user_files/X.CRO   # проверка загруженного файла (вызывает сервер)
+  python run_aquacrop.py --check /tmp/X.CRO            # сухая проверка текста из редактора (ничего не сохраняется)
 
 Ответ - JSON между маркерами ---JSON_OUTPUT_START--- / ---JSON_OUTPUT_END---.
 При ошибке: {"success": false, "error": "..."} и код выхода 1. Выдуманных значений нет.
@@ -57,6 +58,10 @@ def main():
             from pathlib import Path
             from kucrop_core import validate_upload
             emit({"success": True, **validate_upload(Path(args[1]))})
+        if args and args[0] == "--check":
+            from pathlib import Path
+            from kucrop_core import check_file
+            emit({"success": True, **check_file(Path(args[1]))})
         raw = json.loads(args[0]) if args else {}
         if not isinstance(raw, dict):
             raise ValueError("Параметры должны быть JSON-объектом")

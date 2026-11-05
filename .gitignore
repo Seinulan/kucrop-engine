@@ -4,3 +4,7 @@ __pycache__/
 temp_poltavka.txt
 .env
 *.log
+
+.train_*/
+.new_*
+user_files/

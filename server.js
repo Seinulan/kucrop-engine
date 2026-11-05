@@ -6,12 +6,17 @@
  *   POST   /api/files               - загрузка файла (.CRO .SOL .GWT .MAN .CLI .Tnx .ETo .PLU) в user_files/
  *   DELETE /api/files?id=...        - удалить загруженный файл (встроенные файлы не удаляются)
  *   GET    /api/files/download?id=  - скачать файл
+ *   GET    /api/files/content?id=   - текст файла для редактора
+ *   POST   /api/files/check         - сухая проверка текста из редактора (ничего не сохраняется)
+ *   POST   /api/train               - переобучить ИИ на выбранных файлах (фоновая задача)
+ *   GET    /api/train/status        - ход обучения
  *
  * Признаки ИИ считает Python (kucrop_core.ai_block) - там же проверяется, что выбранные файлы
  * совпадают с файлами, на которых модель обучена. Node только выполняет ONNX.
  */
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 const express = require('express');
 
@@ -64,12 +69,31 @@ async function runPythonQueued(args) {
 }
 
 /* ---------- справочники (кеш сбрасывается при загрузке/удалении файлов) ---------- */
-let configCache = null;
+let configCache = null, configSig = '';
+
+/* подпись набора файлов проекта: если файл положили/изменили/удалили в папке вручную, список обновится сам */
+function filesSignature() {
+  const parts = [];
+  for (const dir of [ROOT, USER_DIR]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const n of fs.readdirSync(dir).sort()) {
+      if (n.startsWith('.') || !EXTENSIONS.includes(path.extname(n).toLowerCase())) continue;
+      try { const st = fs.statSync(path.join(dir, n)); parts.push(`${dir === ROOT ? '' : 'u/'}${n}:${st.size}:${st.mtimeMs}`); } catch (e) { /* файл исчез */ }
+    }
+  }
+  for (const n of ['model_meta.json']) {
+    try { parts.push(`${n}:${fs.statSync(path.join(ROOT, n)).mtimeMs}`); } catch (e) { /* нет модели */ }
+  }
+  return parts.join('|');
+}
+
 async function getConfig() {
-  if (configCache) return configCache;
+  const sig = filesSignature();
+  if (configCache && sig === configSig) return configCache;
   const py = await runPythonQueued(['--config']);
   if (!py.ok) throw new Error(py.error + (py.detail ? `: ${py.detail}` : ''));
   configCache = py.data;
+  configSig = sig;
   return configCache;
 }
 
@@ -113,6 +137,15 @@ function safeName(name) {
   return base;
 }
 
+/* Файлы AquaCrop - Windows-кодировка (градусы в .CRO), строки CRLF. Текст из редактора кодируем так же. */
+function textToBuffer(text) {
+  const t = String(text || '').replace(/\r\n?/g, '\n').replace(/\n+$/, '') + '\n';
+  for (const ch of t) {
+    if (ch.codePointAt(0) > 255) throw new Error(`Символ «${ch}» нельзя записать в файл AquaCrop: используйте латиницу, цифры и знаки`);
+  }
+  return Buffer.from(t.replace(/\n/g, '\r\n'), 'latin1');
+}
+
 function fileById(id) {
   const s = String(id || '');
   if (s.startsWith('user_files/')) return path.join(USER_DIR, safeName(s.slice('user_files/'.length)));
@@ -144,7 +177,14 @@ app.post('/api/files', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ success: false, error: e.message });
   }
-  const buf = Buffer.from(String((req.body && req.body.content_b64) || ''), 'base64');
+  let buf;
+  try {
+    buf = req.body && typeof req.body.content === 'string'
+      ? textToBuffer(req.body.content)
+      : Buffer.from(String((req.body && req.body.content_b64) || ''), 'base64');
+  } catch (e) {
+    return res.status(400).json({ success: false, error: e.message });
+  }
   if (!buf.length) return res.status(400).json({ success: false, error: 'Пустой файл' });
   if (buf.length > MAX_UPLOAD_BYTES) return res.status(400).json({ success: false, error: 'Файл больше 2 МБ' });
 
@@ -179,6 +219,120 @@ app.get('/api/files/download', (req, res) => {
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(p))}`);
   res.end(fs.readFileSync(p));
+});
+
+app.get('/api/files/content', (req, res) => {
+  let p;
+  try { p = fileById(req.query.id); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
+  if (!fs.existsSync(p)) return res.status(404).json({ success: false, error: 'Файл не найден' });
+  const text = fs.readFileSync(p).toString('latin1').replace(/\r\n?/g, '\n');
+  res.json({ success: true, id: String(req.query.id), name: path.basename(p), builtin: !String(req.query.id).startsWith('user_files/'), text });
+});
+
+app.post('/api/files/check', async (req, res) => {
+  let name, buf;
+  try {
+    name = safeName(req.body && req.body.name);
+    buf = textToBuffer(req.body && req.body.content);
+  } catch (e) {
+    return res.json({ success: false, error: e.message });
+  }
+  if (buf.length > MAX_UPLOAD_BYTES) return res.json({ success: false, error: 'Файл больше 2 МБ' });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kucrop-check-'));
+  try {
+    const target = path.join(dir, name);
+    fs.writeFileSync(target, buf);
+    const py = await runPythonQueued(['--check', target]);
+    if (!py.ok) return res.json({ success: false, error: py.error });
+    res.json({ success: true, ...py.data });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ---------- переобучение ИИ на выбранных файлах ---------- */
+let train = { state: 'idle' };
+
+function trainSpecFrom(body) {
+  const str = (v, what) => {
+    if (typeof v !== 'string' || !v || v.length > 120) throw new Error(`Не указан файл: ${what}`);
+    return v;
+  };
+  const list = (v, what) => {
+    if (!Array.isArray(v) || !v.length || v.length > 8) throw new Error(`Выберите от 1 до 8 файлов: ${what}`);
+    return v.map((x) => str(x, what));
+  };
+  return {
+    cli: str(body.cli, 'климат'), man: str(body.man, 'управление'), gwt: str(body.gwt, 'грунтовые воды'),
+    crops: list(body.crops, 'культуры'), soils: list(body.soils, 'почвы'),
+  };
+}
+
+async function finishTraining(dir, code, log) {
+  const files = ['aquacrop_model.onnx', 'model_meta.json', 'training_data.csv'];
+  try {
+    if (code !== 0 || files.some((f) => !fs.existsSync(path.join(dir, f)))) {
+      const err = log.slice().reverse().find((l) => /ОШИБКА|Слишком много|Error|Traceback/i.test(l)) || log[log.length - 1] || 'неизвестная ошибка';
+      train = { ...train, state: 'error', error: err.slice(0, 400), finished: Date.now() };
+      return;
+    }
+    for (const f of files) {                      // сначала во временные имена, потом подмена
+      fs.copyFileSync(path.join(dir, f), path.join(ROOT, `.new_${f}`));
+    }
+    for (const f of files) fs.renameSync(path.join(ROOT, `.new_${f}`), path.join(ROOT, f));
+    aiLoadError = null;
+    await loadModel();
+    configCache = null;
+    if (!session) {
+      train = { ...train, state: 'error', error: aiLoadError || 'Новая модель не загрузилась', finished: Date.now() };
+    } else {
+      train = { ...train, state: 'done', progress: 1, metrics: meta.metrics, n_samples: meta.n_samples, finished: Date.now() };
+    }
+  } catch (e) {
+    train = { ...train, state: 'error', error: e.message, finished: Date.now() };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+app.post('/api/train', (req, res) => {
+  if (train.state === 'running') return res.status(409).json({ success: false, error: 'Обучение уже идёт' });
+  let spec;
+  try { spec = trainSpecFrom(req.body || {}); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
+  const n = Math.min(3000, Math.max(100, Math.round(Number(req.body.n) || 1000)));
+  const dir = fs.mkdtempSync(path.join(ROOT, '.train_'));
+  fs.writeFileSync(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const env = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
+  const child = spawn(PYTHON, ['generate_model.py', '--spec', path.join(dir, 'spec.json'), '--out-dir', dir, '--n', String(n)],
+                      { cwd: ROOT, env, windowsHide: true });
+  const log = [];
+  train = { state: 'running', started: Date.now(), n, progress: 0, stage: 'Запуск', spec, pid: child.pid };
+  let buf = '';
+  const onLine = (line) => {
+    if (!line.trim()) return;
+    log.push(line);
+    if (log.length > 60) log.shift();
+    const m = line.match(/(\d+)\/(\d+)\s+ok=(\d+)/);
+    if (m) {
+      train.progress = Math.min(0.95, (Number(m[1]) / Number(m[2])) * 0.95);
+      train.stage = `Расчёты AquaCrop: ${m[1]} из ${m[2]}`;
+    } else if (/Отложенная выборка|Кросс-валидация/.test(line)) {
+      train.stage = 'Обучение и проверка модели';
+    } else if (/Готово/.test(line)) {
+      train.stage = 'Сохранение модели';
+    }
+  };
+  const feed = (d) => { buf += d; const parts = buf.split(/\r?\n/); buf = parts.pop(); parts.forEach(onLine); };
+  child.stdout.on('data', feed);
+  child.stderr.on('data', feed);
+  child.on('error', (e) => { train = { ...train, state: 'error', error: `Не удалось запустить Python (${PYTHON}): ${e.message}`, finished: Date.now() }; });
+  child.on('close', (code) => { if (buf) onLine(buf); if (train.state === 'running') finishTraining(dir, code, log); });
+  res.json({ success: true, n });
+});
+
+app.get('/api/train/status', (req, res) => {
+  const { pid, ...rest } = train;
+  res.json({ success: true, ...rest, elapsed_s: train.started ? Math.round(((train.finished || Date.now()) - train.started) / 1000) : 0 });
 });
 
 app.post('/api/predict', async (req, res) => {

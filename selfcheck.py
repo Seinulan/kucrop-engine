@@ -6,7 +6,7 @@ selfcheck.py - проверка, что физическое ядро читае
 """
 import sys
 
-from kucrop_core import TARGET_YEAR, simulate
+from kucrop_core import DEFAULTS, TARGET_YEAR, simulate
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -73,6 +73,28 @@ def main():
             checks.append((False, f"ИИ ({name}): недоступен - {r['ai'].get('reason', 'нет onnxruntime')}"))
         else:
             checks.append((abs(ai - r["yield_tonne_ha"]) < 0.3, f"ИИ ≈ физика ({name}): {ai:.2f} / {r['yield_tonne_ha']} т/га"))
+
+    # редактор файлов: правильная правка проходит проверку, физически невозможная - нет
+    import tempfile
+    from pathlib import Path
+    from kucrop_core import BASE_DIR, check_file
+    src = (BASE_DIR / DEFAULTS['crop']).read_text(encoding="latin-1")
+    with tempfile.TemporaryDirectory() as tmp:
+        good, bad_f = Path(tmp) / "good.CRO", Path(tmp) / "bad.CRO"
+        good.write_bytes(src.replace("17.0       : Water", "19.0       : Water").encode("latin-1"))
+        bad_f.write_bytes(src.replace("0.85      : Maximum canopy", "1.85      : Maximum canopy").encode("latin-1"))
+        try:
+            ok_text = check_file(good)["summary"]["text"]
+        except ValueError as exc:
+            ok_text = None
+            print("   ", exc)
+        try:
+            check_file(bad_f)
+            rejected = False
+        except ValueError:
+            rejected = True
+    checks.append((bool(ok_text and "WP* 19" in ok_text), f"Редактор: правка WP* принимается ({ok_text})"))
+    checks.append((rejected, "Редактор: CCx = 1.85 отклоняется с понятной ошибкой"))
 
     bad = 0
     for ok, text in checks:

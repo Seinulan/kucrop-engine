@@ -12,6 +12,9 @@ generate_model.py - обучение ИИ-суррогата поверх физ
 
   python generate_model.py            # ~1440 симуляций (несколько минут)
   python generate_model.py --n 200    # быстрый пробный прогон
+  python generate_model.py --spec spec.json --out-dir tmp/   # обучение на выбранных файлах (так запускает сайт)
+      spec.json: {"cli": "Poltavka.CLI", "man": "final_2.MAN", "gwt": "Poltavka_0712.GWT",
+                  "crops": ["final.CRO", "user_files/my.CRO"], "soils": ["Poltavka_NKA.SOL", "aquacrop:Loam"]}
 """
 import argparse
 import itertools
@@ -26,8 +29,8 @@ import numpy as np
 import pandas as pd
 
 from kucrop_core import (BASE_DIR, DEFAULTS, GW_TRAIN_RANGE, INIT_WATER, IRRIGATION, META_PATH, PLANTING_TRAIN,
-                         TARGET_YEAR, TRAIN_CROPS, TRAIN_SOILS, feature_names, make_features, normalize_params,
-                         simulate, training_fingerprint)
+                         TARGET_YEAR, TRAIN_CROPS, TRAIN_SOILS, apply_training_spec, feature_names, make_features,
+                         normalize_params, simulate, training_fingerprint)
 from onnx_export import export, verify
 
 try:
@@ -88,7 +91,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=1440, help="примерное число симуляций")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--out", default=str(BASE_DIR / "aquacrop_model.onnx"))
+    ap.add_argument("--out", default=None, help="куда писать .onnx (по умолчанию рядом с проектом)")
+    ap.add_argument("--spec", default=None, help="JSON с файлами для обучения (по умолчанию - файлы из kucrop_core)")
+    ap.add_argument("--out-dir", default=None, help="папка для .onnx, model_meta.json и training_data.csv")
     ap.add_argument("--model", choices=list(MODELS), default="et", help="et = ExtraTrees (по умолчанию), rf = RandomForest")
     ap.add_argument("--reuse-data", action="store_true",
                     help="не запускать симуляции заново, взять training_data.csv (если признаки совпадают)")
@@ -96,8 +101,18 @@ def main():
 
     from sklearn.model_selection import cross_val_score, train_test_split
 
+    if args.spec:
+        try:
+            applied = apply_training_spec(json.loads(Path(args.spec).read_text(encoding="utf-8")))
+        except ValueError as exc:
+            raise SystemExit(f"ОШИБКА: {exc}")
+        print("Обучение на выбранных файлах:", applied, flush=True)
+    out_dir = Path(args.out_dir) if args.out_dir else BASE_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    onnx_path = Path(args.out) if args.out else out_dir / "aquacrop_model.onnx"
+    meta_path = out_dir / "model_meta.json" if args.out_dir else META_PATH
     names = feature_names()
-    data_csv = BASE_DIR / "training_data.csv"
+    data_csv = out_dir / "training_data.csv"
     sim_seconds = None
     if args.reuse_data:
         if not data_csv.exists():
@@ -120,7 +135,7 @@ def main():
                              "init_water": cfg["initWater"], "start": cfg["startDate"]})
             except Exception as exc:
                 failures.append((req, f"{type(exc).__name__}: {exc}"))
-            if i % 100 == 0 or i == len(configs):
+            if i % 20 == 0 or i == len(configs):
                 el = time.time() - t0
                 print(f"  {i}/{len(configs)}  ok={len(rows)} ошибок={len(failures)}  {el:.0f} с, "
                       f"осталось ~{el / i * (len(configs) - i):.0f} с", flush=True)
@@ -129,7 +144,7 @@ def main():
             print(f"\nНеудачных симуляций: {len(failures)}. Первые:")
             for cfg, msg in failures[:3]:
                 print("  ", cfg, "->", msg)
-        if len(failures) > 0.05 * len(configs) or len(rows) < 50:
+        if len(failures) > 0.05 * len(configs) or len(rows) < min(50, 0.5 * len(configs)):
             raise SystemExit("Слишком много неудачных симуляций - обучение остановлено (метки нельзя придумывать).")
         df = pd.DataFrame(rows)
         df.to_csv(data_csv, index=False)
@@ -164,7 +179,7 @@ def main():
     diff = verify(onnx_bytes, final, X)
     if diff > 1e-3:
         raise SystemExit(f"ONNX расходится со sklearn (макс. {diff:.5f}) - файл не записан")
-    Path(args.out).write_bytes(onnx_bytes)
+    onnx_path.write_bytes(onnx_bytes)
 
     # скорость: один прогноз ONNX против одного расчёта физики
     import onnxruntime as ort
@@ -203,10 +218,10 @@ def main():
         "note": f"Суррогат воспроизводит AquaCrop для {TARGET_YEAR} года и файлов из training_file_names. "
                 "Для других файлов сайт ИИ не показывает.",
     }
-    META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     speed = meta["speed"]
     print(f"\nСкорость: физика {speed['physics_s_per_run']} с/расчёт, ИИ (ONNX) {speed['onnx_ms_per_prediction']} мс/прогноз")
-    print(f"Готово: {Path(args.out).name} ({Path(args.out).stat().st_size / 1024:.0f} КБ, экспорт: {exporter}, "
+    print(f"Готово: {onnx_path.name} ({onnx_path.stat().st_size / 1024:.0f} КБ, экспорт: {exporter}, "
           f"ONNX vs sklearn: {diff:.1e}), model_meta.json, training_data.csv")
 
 

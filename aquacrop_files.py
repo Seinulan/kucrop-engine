@@ -125,6 +125,37 @@ class CropFile:
         return int(self.params["MaturityCD"])
 
 
+def _check_crop_ranges(name: str, q: dict, calendar: bool) -> None:
+    """Физически невозможные значения в .CRO - ошибка с номером строки (удобно при правке файла)."""
+    def bad(line, text):
+        raise ValueError(f"{name}, строка {line}: {text}")
+
+    if not q["Tbase"] < q["Tupp"]:
+        bad(8, f"Tbase ({q['Tbase']:g}) должна быть меньше Tupp ({q['Tupp']:g})")
+    if not 0 < q["CCx"] <= 1:
+        bad(50, f"CCx должен быть в диапазоне (0; 1], а не {q['CCx']:g}")
+    if q["WP"] <= 0:
+        bad(61, f"WP* должен быть больше 0, а не {q['WP']:g}")
+    if not 0 <= q["HI0"] <= 1:
+        bad(64, f"HI0 должен быть от 0 до 100 %, а не {q['HI0'] * 100:g}")
+    if q["Zmin"] <= 0 or q["Zmax"] < q["Zmin"]:
+        bad(38, f"глубина корней: Zmin={q['Zmin']:g}, Zmax={q['Zmax']:g} - нужно 0 < Zmin <= Zmax")
+    for line, key in ((11, "p_up1"), (12, "p_lo1"), (14, "p_up2"), (16, "p_up3"), (19, "p_up4")):
+        if not 0 <= q[key] <= 1:
+            bad(line, f"пороговая доля истощения влаги должна быть от 0 до 1, а не {q[key]:g}")
+    if q["p_lo1"] < q["p_up1"]:
+        bad(12, f"нижний порог p-exp ({q['p_lo1']:g}) не может быть меньше верхнего ({q['p_up1']:g})")
+    if calendar:
+        if q["CGC_CD"] <= 0 or q["CDC_CD"] <= 0:
+            bad(46, "CGC и CDC должны быть больше 0")
+        if not (0 < q["EmergenceCD"] < q["MaturityCD"]):
+            bad(52, f"всходы ({q['EmergenceCD']} дн.) должны быть раньше созревания ({q['MaturityCD']} дн.)")
+        if not q["SenescenceCD"] <= q["MaturityCD"]:
+            bad(54, f"старение ({q['SenescenceCD']} дн.) позже созревания ({q['MaturityCD']} дн.)")
+        if not q["HIstartCD"] < q["MaturityCD"]:
+            bad(56, f"цветение ({q['HIstartCD']} дн.) позже созревания ({q['MaturityCD']} дн.)")
+
+
 def read_cro(path) -> CropFile:
     lines = _value_lines(_read(path))
     title = lines[0][1] if lines else ""
@@ -180,6 +211,7 @@ def read_cro(path) -> CropFile:
         params["CalendarType"] = 2
     if params["MaturityCD"] <= 0:
         raise ValueError(f"{Path(path).name}: не задана длина цикла в днях (строка 55) - нужна для выбора даты уборки")
+    _check_crop_ranges(Path(path).name, params, calendar)
 
     return CropFile(path=str(path), title=title, version=version, params=params, extra=extra,
                     calendar_days=calendar)
@@ -243,6 +275,13 @@ def read_sol(path) -> SoilFile:
         horizons.append(SoilHorizon(*nums, description=" ".join(parts[9:])))
     if len(horizons) != n:
         raise ValueError(f"{Path(path).name}: заявлено горизонтов {n}, прочитано {len(horizons)}")
+    if not 0 < cn <= 100:
+        raise ValueError(f"{Path(path).name}: CN должен быть от 0 до 100, а не {cn:g}")
+    if rew < 0:
+        raise ValueError(f"{Path(path).name}: REW не может быть отрицательным")
+    for h in horizons:
+        if h.thickness <= 0 or h.ksat < 0:
+            raise ValueError(f"{Path(path).name}: горизонт '{h.description}': толщина должна быть > 0, Ksat >= 0")
     for h in horizons:
         if not (0 < h.wp < h.fc < h.sat <= 100):
             raise ValueError(f"{Path(path).name}: неверные влажности в горизонте '{h.description}'")

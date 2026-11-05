@@ -113,11 +113,11 @@ def all_files() -> dict:
     """{id: Path}. id встроенного файла - имя, загруженного - 'user_files/имя'."""
     out = {}
     for p in sorted(BASE_DIR.iterdir()):
-        if p.is_file() and kind_of(p.name):
+        if p.is_file() and kind_of(p.name) and not p.name.startswith("."):
             out[p.name] = p
     if USER_DIR.is_dir():
         for p in sorted(USER_DIR.iterdir()):
-            if p.is_file() and kind_of(p.name):
+            if p.is_file() and kind_of(p.name) and not p.name.startswith("."):
                 out["user_files/" + p.name] = p
     return out
 
@@ -209,8 +209,8 @@ def _numbers(text: str):
     return [float(x) for x in re.findall(r"\d+(?:[.,]\d+)?", text.replace(",", "."))]
 
 
-def summarize(kind: str, file_id: str) -> dict:
-    p = resolve(file_id, kind)
+def summarize(kind: str, file_id: str, path: Path = None) -> dict:
+    p = Path(path) if path is not None else resolve(file_id, kind)
     obj = parse(kind, p)
     if kind == "crop":
         q = obj.params
@@ -267,12 +267,35 @@ def summarize(kind: str, file_id: str) -> dict:
             "text": f"с {obj.first_date[2]:02d}.{obj.first_date[1]:02d}.{obj.first_date[0]}, {len(obj.rows)} дн."}
 
 
+def _ai_trained(kind: str, fid: str, p: Path, tf) -> bool:
+    """Совпадает ли содержимое файла с тем, на чём обучен ИИ (по sha256)."""
+    if not tf:
+        return False
+    try:
+        if kind == "crop":
+            return sha256(p) in tf["crop"].values()
+        if kind == "soil":
+            return sha256(p) in tf["soil"].values()
+        if kind == "man":
+            return sha256(p) == tf["man"]
+        if kind == "cli":
+            return {k: sha256(v) for k, v in climate_paths(fid).items()} == tf["climate"]
+        if kind == "gwt":
+            return parse("gwt", p).mode == tf.get("gwt_mode", 1)
+    except Exception:
+        return False
+    return False
+
+
 def library() -> dict:
     """Все файлы по видам: id, источник, корректен ли, сводка или ошибка."""
     out = {k: [] for k in KIND_EXT}
+    meta = load_meta()
+    tf = meta.get("training_files") if meta else None
     for fid, p in all_files().items():
         kind = kind_of(fid)
-        entry = {"id": fid, "name": p.name, "source": "user" if fid.startswith("user_files/") else "builtin"}
+        entry = {"id": fid, "name": p.name, "source": "user" if fid.startswith("user_files/") else "builtin",
+                 "ai_trained": _ai_trained(kind, fid, p, tf)}
         try:
             entry["summary"] = to_jsonable(summarize(kind, fid))
             entry["ok"] = True
@@ -298,6 +321,29 @@ def validate_upload(path: Path) -> dict:
         except ValueError as exc:         # .CLI загружен раньше своих рядов погоды - это нормально
             return {"kind": kind, "id": fid, "summary": None, "complete": False, "note": str(exc)}
     return {"kind": kind, "id": fid, "summary": to_jsonable(summarize(kind, fid)), "complete": True}
+
+
+def check_file(path: Path) -> dict:
+    """Сухая проверка файла из редактора: ничего не сохраняется, возвращает сводку или ValueError."""
+    path = Path(path)
+    kind = kind_of(path.name)
+    if not kind:
+        raise ValueError(f"Неподдерживаемое расширение: {path.suffix}")
+    if path.stat().st_size > MAX_UPLOAD_BYTES:
+        raise ValueError("Файл больше 2 МБ")
+    obj = parse(kind, path)
+    if kind == "cli":
+        missing = []
+        for k in ("tnx", "eto", "plu"):
+            try:
+                _find_sibling(obj[k], path)
+            except ValueError:
+                missing.append(obj[k])
+        text = f"ссылки: {obj['tnx']}, {obj['eto']}, {obj['plu']}"
+        if missing:
+            text += f" - не найдены в проекте: {', '.join(missing)}"
+        return {"kind": kind, "summary": {"text": text}, "complete": not missing}
+    return {"kind": kind, "summary": to_jsonable(summarize(kind, None, path)), "complete": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -422,20 +468,21 @@ def ai_block(p: dict, meta: dict = None) -> dict:
     clim = climate_paths(f["cli"])
     if p["start"].year != meta.get("target_year"):
         return {"applicable": False, "reason": f"ИИ обучен на {meta.get('target_year')} годе"}
+    tn = meta.get("training_file_names", {})
     if {k: sha256(v) for k, v in clim.items()} != tf["climate"]:
-        return {"applicable": False, "reason": "выбран другой климат - ИИ обучен на Poltavka.CLI"}
+        return {"applicable": False, "reason": f"выбран другой климат - ИИ обучен на {Path(tn.get('cli', DEFAULTS['cli'])).name}"}
     if sha256(resolve(f["man"], "man")) != tf["man"]:
-        return {"applicable": False, "reason": "выбран другой .MAN - ИИ обучен на final_2.MAN"}
+        return {"applicable": False, "reason": f"выбран другой .MAN (или файл изменён) - ИИ обучен на {Path(tn.get('man', DEFAULTS['man'])).name}"}
     if p["gw_mode"] != tf.get("gwt_mode", 1):
         return {"applicable": False, "reason": "ИИ обучен с постоянным уровнем грунтовых вод"}
     crop_hash = sha256(resolve(f["crop"], "crop"))
     crop = next((n for n, h in tf["crop"].items() if h == crop_hash), None)
     if crop is None:
-        return {"applicable": False, "reason": f"культура {Path(f['crop']).name} не участвовала в обучении ИИ"}
+        return {"applicable": False, "reason": f"культура {Path(f['crop']).name} не участвовала в обучении ИИ (или файл изменён)"}
     soil_key = f["soil"] if f["soil"] in BUILTIN_SOILS else sha256(resolve(f["soil"], "soil"))
     soil = next((n for n, h in tf["soil"].items() if h == soil_key), None)
     if soil is None:
-        return {"applicable": False, "reason": f"почва {Path(f['soil']).name} не участвовала в обучении ИИ"}
+        return {"applicable": False, "reason": f"почва {Path(f['soil']).name} не участвовала в обучении ИИ (или файл изменён)"}
 
     row = {"gw_depth": p["gw_depth"], "init_fc": 1.0 if p["init_water"] == "FC" else 0.0,
            "irrigated": 1.0 if p["irrigation"] == "Irrigated" else 0.0,
@@ -467,6 +514,45 @@ def make_features(p: dict, feature_order: list) -> list:
     row.update({f"crop_{c}": 1.0 if c == crop else 0.0 for c in TRAIN_CROPS})
     row.update({f"soil_{s}": 1.0 if s == soil else 0.0 for s in TRAIN_SOILS})
     return [float(row[n]) for n in feature_order]
+
+
+def _category_names(ids: list) -> dict:
+    """{имя категории: id файла}; имя - из имени файла, безопасное для имени признака."""
+    out = {}
+    for fid in ids:
+        base = re.sub(r"[^A-Za-z0-9]+", "_", Path(fid.split(":")[-1]).stem).strip("_") or "file"
+        name, k = base, 2
+        while name in out:
+            name, k = f"{base}_{k}", k + 1
+        out[name] = fid
+    return out
+
+
+def apply_training_spec(spec: dict) -> dict:
+    """Настроить обучение ИИ на выбранные файлы: {cli, man, gwt, crops: [id], soils: [id]}.
+    Меняет DEFAULTS / TRAIN_CROPS / TRAIN_SOILS на месте (на них ссылаются generate_model и make_features)."""
+    for k in ("cli", "man", "gwt"):
+        resolve(str(spec.get(k) or ""), k)
+    crops, soils = list(spec.get("crops") or []), list(spec.get("soils") or [])
+    if not crops or not soils:
+        raise ValueError("Для обучения нужна хотя бы одна культура и одна почва")
+    for fid in crops:
+        parse("crop", resolve(fid, "crop"))
+    for fid in soils:
+        if fid not in BUILTIN_SOILS:
+            parse("soil", resolve(fid, "soil"))
+    g = parse("gwt", resolve(spec["gwt"], "gwt"))
+    if g.mode != 1:
+        raise ValueError("ИИ обучается только с постоянным уровнем грунтовых вод (режим 1 в .GWT)")
+    _, w = load_weather(spec["cli"])
+    if TARGET_YEAR not in w["years"]:
+        raise ValueError(f"В климате {spec['cli']} нет полного {TARGET_YEAR} года")
+    DEFAULTS.update(cli=spec["cli"], man=spec["man"], gwt=spec["gwt"], crop=crops[0], soil=soils[0])
+    TRAIN_CROPS.clear()
+    TRAIN_CROPS.update(_category_names(crops))
+    TRAIN_SOILS.clear()
+    TRAIN_SOILS.update(_category_names(soils))
+    return {"crops": dict(TRAIN_CROPS), "soils": dict(TRAIN_SOILS)}
 
 
 def feature_names() -> list:
@@ -706,12 +792,47 @@ def simulate(raw_params: dict, detail: bool = True) -> dict:
         "yield_potential": None if yield_pot is None else round(yield_pot, 2),
         "max_canopy_cover": round(float(np.nanmax(cc)), 1),
     }
+    wd = weather.set_index("Date").reindex(dates)
+    r1 = lambda a, d=1: [round(float(v), d) for v in a]
     out["charts"] = {
         "days": list(range(1, n + 1)), "dates": [d.strftime("%Y-%m-%d") for d in dates],
-        "canopy_cover": [round(float(v), 1) for v in cc], "transpiration": [round(float(v), 2) for v in tr],
-        "rain": [round(float(v), 1) for v in rain], "capillary_rise": [round(float(v), 2) for v in cr],
+        "canopy_cover": r1(cc), "transpiration": r1(tr, 2),
+        "rain": r1(rain), "capillary_rise": r1(cr, 2),
+        "evaporation": r1(_col(wf, "Es"), 2), "infiltration": r1(_col(wf, "Infl")), "runoff": r1(_col(wf, "Runoff")),
+        "deep_percolation": r1(_col(wf, "DeepPerc")), "irrigation": r1(_col(wf, "IrrDay")),
+        "biomass_t_ha": r1(_col(cg, "biomass") / 100.0, 2),
+        "tmin": r1(wd["MinTemp"].to_numpy()), "tmax": r1(wd["MaxTemp"].to_numpy()), "eto": r1(wd["ReferenceET"].to_numpy(), 2),
     }
+    out["climate"] = climate_summary(weather, w)
     return to_jsonable(out)
+
+
+MONTHS_RU = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+
+def climate_summary(weather: pd.DataFrame, info: dict) -> dict:
+    """Помесячный климат целевого года и среднее по остальным полным годам ряда (для сравнения)."""
+    df = weather.assign(Tmean=(weather.MinTemp + weather.MaxTemp) / 2.0, Y=weather.Date.dt.year, M=weather.Date.dt.month)
+
+    def monthly(d):
+        g = d.groupby("M")
+        return (g.Precipitation.sum().reindex(range(1, 13)), g.ReferenceET.sum().reindex(range(1, 13)),
+                g.Tmean.mean().reindex(range(1, 13)))
+
+    def rnd(s, d=1):
+        return [None if pd.isna(v) else round(float(v), d) for v in s]
+
+    rain, eto, tm = monthly(df[df.Y == TARGET_YEAR])
+    out = {"year": TARGET_YEAR, "months": MONTHS_RU, "rain": rnd(rain), "eto": rnd(eto), "tmean": rnd(tm),
+           "year_rain": round(float(np.nansum(rain)), 1), "year_eto": round(float(np.nansum(eto)), 1),
+           "ref_years": [y for y in info["years"] if y != TARGET_YEAR]}
+    if out["ref_years"]:
+        ref = df[df.Y.isin(out["ref_years"])]
+        k = len(out["ref_years"])
+        r_rain, r_eto, r_tm = monthly(ref)
+        out.update(ref_rain=rnd(r_rain / k), ref_eto=rnd(r_eto / k), ref_tmean=rnd(r_tm),
+                   ref_year_rain=round(float(np.nansum(r_rain)) / k, 1))
+    return out
 
 
 def config_info() -> dict:
@@ -723,6 +844,8 @@ def config_info() -> dict:
         "defaults": DEFAULTS,
         "library": library(),
         "builtin_soils": BUILTIN_SOILS,
+        "ai_builtin_soils": [fid for fid in BUILTIN_SOILS
+                             if (load_meta() or {}).get("training_files", {}).get("soil") and fid in load_meta()["training_files"]["soil"].values()],
         "planting": {"min": date(TARGET_YEAR, m1, d1).isoformat(), "max": date(TARGET_YEAR, m2, d2).isoformat(),
                      "default": date(TARGET_YEAR, 5, 25).isoformat()},
         "groundwater": {"min": GW_TRAIN_RANGE[0], "max": GW_TRAIN_RANGE[1],
