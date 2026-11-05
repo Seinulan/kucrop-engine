@@ -14,43 +14,46 @@
         .tab-btn.active { color: #f59e0b; border-bottom-color: #f59e0b; font-weight: 600; }
         .field { width: 100%; background: #0f172a; border: 1px solid #334155; border-radius: .75rem; padding: .6rem 1rem; color: #e2e8f0; }
         .field:focus { outline: none; box-shadow: 0 0 0 2px #f59e0b; }
+        .field:disabled { opacity: .55; cursor: not-allowed; }
         .lbl { display: block; font-size: .75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .25rem; }
         .stat { background: #1e293b; border: 1px solid #334155; border-radius: .5rem; padding: .75rem; text-align: center; }
         .stat span:first-child { font-size: .75rem; color: #94a3b8; display: block; }
         .stat span:last-child { font-size: 1.1rem; font-weight: 700; }
+        .icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; height: 2.6rem; min-width: 2.6rem; padding: 0 .7rem;
+                    border-radius: .75rem; border: 1px solid #334155; background: #0f172a; color: #cbd5e1; font-size: .85rem; cursor: pointer; }
+        .icon-btn:hover { border-color: #f59e0b; color: #fbbf24; }
+        .icon-btn[hidden] { display: none; }
+        .kv { display: grid; grid-template-columns: auto 1fr; gap: .15rem .9rem; }
+        .kv dt { color: #94a3b8; } .kv dd { color: #e2e8f0; }
+        table.mini { width: 100%; border-collapse: collapse; font-size: .75rem; }
+        table.mini th, table.mini td { border-bottom: 1px solid #1e293b; padding: .25rem .4rem; text-align: left; }
+        table.mini th { color: #94a3b8; font-weight: 600; }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-3 sm:p-4">
 
-    <div class="max-w-4xl w-full bg-slate-800/90 rounded-2xl p-5 sm:p-8 border border-slate-700 shadow-2xl my-6">
+    <div class="max-w-4xl w-full bg-slate-800/90 rounded-2xl p-4 sm:p-8 border border-slate-700 shadow-2xl my-4">
 
         <div class="flex items-center gap-3 mb-6 border-b border-slate-700 pb-4">
             <div class="bg-amber-500/20 p-3 rounded-xl border border-amber-500/30 text-2xl">🌾</div>
             <div>
                 <h1 class="text-2xl font-bold text-white">KUCrop Engine</h1>
-                <p class="text-slate-400 text-sm">Физическая модель AquaCrop + ИИ-суррогат · Полтавка (СКО)</p>
+                <p class="text-slate-400 text-sm" id="subtitle">AquaCrop + ИИ-суррогат · Северо-Казахстанская область (СКО), Казахстан</p>
             </div>
         </div>
 
-        <form id="predictForm" class="space-y-5 mb-8" novalidate>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label for="crop" class="lbl">Культура (Crop)</label>
-                    <select id="crop" class="field">
-                        <option value="Sunflower" selected>Подсолнечник (final.CRO)</option>
-                        <option value="Wheat">Пшеница (Wheat.CRO)</option>
-                        <option value="Barley">Ячмень (Barley.CRO)</option>
-                    </select>
-                </div>
-                <div>
-                    <label for="irrigation" class="lbl">Управление (Management)</label>
-                    <select id="irrigation" class="field">
-                        <option value="Rainfed" selected>Богара (как в final_2.MAN)</option>
-                        <option value="Irrigated">Орошение по порогу 70% TAW (сценарий)</option>
-                    </select>
-                </div>
+        <!-- ================= файлы проекта ================= -->
+        <section class="mb-6">
+            <div class="flex items-baseline justify-between gap-2 mb-3">
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Файлы проекта</h2>
+                <span class="text-xs text-slate-500">как в AquaCrop: выберите или загрузите свой файл</span>
             </div>
+            <div id="fileRows" class="space-y-3"></div>
+            <div id="fileMsg" role="status" class="hidden mt-3 rounded-xl px-4 py-2.5 text-sm"></div>
+        </section>
 
+        <!-- ================= параметры расчёта ================= -->
+        <form id="predictForm" class="space-y-5 mb-8" novalidate>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label for="startDate" class="lbl">Дата посева</label>
@@ -66,22 +69,21 @@
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                    <label for="soil" class="lbl">Почва (Soil)</label>
-                    <select id="soil" class="field">
-                        <option value="Poltavka_NKA" selected>Poltavka_NKA.SOL (ваш файл)</option>
-                        <option value="Loam">Суглинок (встроенный, для сравнения)</option>
-                        <option value="SandyLoam">Супесь (встроенная, для сравнения)</option>
-                    </select>
+                    <label for="gwDepth" class="lbl">Глубина грунтовых вод, м</label>
+                    <input type="number" id="gwDepth" min="0.5" max="15" step="0.1" inputmode="decimal" class="field">
+                    <p id="gwHint" class="text-xs text-slate-500 mt-1">&nbsp;</p>
                 </div>
                 <div>
-                    <label for="gwDepth" class="lbl">Глубина грунтовых вод, м</label>
-                    <input type="number" id="gwDepth" value="1.9" min="1" max="10" step="0.1" inputmode="decimal" class="field">
-                    <p id="gwHint" class="text-xs text-slate-500 mt-1">&nbsp;</p>
+                    <label for="irrigation" class="lbl">Орошение</label>
+                    <select id="irrigation" class="field">
+                        <option value="Rainfed" selected>Богара (без орошения)</option>
+                        <option value="Irrigated">Орошение по порогу 70% TAW (сценарий)</option>
+                    </select>
                 </div>
             </div>
 
             <fieldset>
-                <legend class="lbl">Начальная влажность почвы</legend>
+                <legend class="lbl">Начальная влажность почвы (все горизонты)</legend>
                 <div class="grid grid-cols-2 gap-2">
                     <label class="cursor-pointer">
                         <input type="radio" name="initWater" value="FC" class="peer sr-only" checked>
@@ -101,6 +103,7 @@
             </button>
         </form>
 
+        <!-- ================= результаты ================= -->
         <div id="resultSection" class="hidden space-y-6">
 
             <div id="warnBox" class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
@@ -109,7 +112,7 @@
             </div>
 
             <div class="p-5 bg-slate-900/90 rounded-xl border border-amber-500/30 text-center">
-                <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold mb-2">Урожайность (сухое зерно)</p>
+                <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold mb-2">Урожайность (сухая масса)</p>
                 <div class="flex items-center justify-center gap-4 sm:gap-6 my-3">
                     <div>
                         <span class="text-xs text-slate-400 block mb-1">Физическая модель AquaCrop</span>
@@ -140,12 +143,10 @@
                     <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Развитие кроны (Canopy Cover) и транспирация</h3>
                     <div class="relative h-72 w-full"><canvas id="canopyChart"></canvas></div>
                 </div>
-
                 <div id="rainTab" class="tab-content hidden">
                     <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Осадки и капиллярный подъём от грунтовых вод, мм/сут</h3>
                     <div class="relative h-72 w-full"><canvas id="rainChart"></canvas></div>
                 </div>
-
                 <div id="waterBalanceTab" class="tab-content hidden">
                     <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Водный баланс за вегетацию, мм</h3>
                     <p class="text-xs text-slate-500 mb-2">Приход</p>
@@ -163,7 +164,6 @@
                         <div class="stat"><span>Глубокая фильтрация</span><span class="text-slate-300" id="wbDP">—</span></div>
                     </div>
                 </div>
-
                 <div id="productionTab" class="tab-content hidden">
                     <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Формирование биомассы и урожая (Production)</h3>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -174,12 +174,11 @@
                     </div>
                     <p class="text-xs text-slate-500 mt-3">Урожай = биомасса × HI. Потенциальный урожай - без водного стресса.</p>
                 </div>
-
                 <div id="envTab" class="tab-content hidden">
                     <h3 class="text-xs font-semibold text-slate-400 uppercase mb-3">Что реально использовалось в этом расчёте</h3>
                     <div id="envList" class="text-xs font-mono space-y-2 text-slate-300 bg-slate-950 p-4 rounded-lg border border-slate-800 break-words"></div>
                     <div id="notModeledBox" class="hidden mt-3 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                        <p class="font-semibold mb-1">Есть в ваших файлах, но не учитывается движком AquaCrop-OSPy:</p>
+                        <p class="font-semibold mb-1">Есть в файлах, но не учитывается движком AquaCrop-OSPy:</p>
                         <ul id="notModeledList" class="list-disc pl-5 space-y-1"></ul>
                     </div>
                 </div>
@@ -190,122 +189,251 @@
     <script>
         const $ = (id) => document.getElementById(id);
         let CONFIG = null;
-        let canopyChart = null;
-        let rainChart = null;
-        Chart.defaults.color = '#94a3b8';
+        let canopyChart = null, rainChart = null;
+        if (window.Chart) Chart.defaults.color = '#94a3b8';
 
+        const SLOTS = [
+            { kind: 'cli',  label: 'Климат (.CLI)',          accept: '.cli,.tnx,.eto,.plu', multiple: true,
+              hint: 'Загрузите .CLI вместе с его .Tnx, .ETo и .PLU' },
+            { kind: 'crop', label: 'Культура (.CRO)',        accept: '.cro' },
+            { kind: 'soil', label: 'Почва (.SOL)',           accept: '.sol' },
+            { kind: 'gwt',  label: 'Грунтовые воды (.GWT)',  accept: '.gwt' },
+            { kind: 'man',  label: 'Управление полем (.MAN)', accept: '.man' },
+        ];
+        const selected = {};          // kind -> id
+
+        const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
         const num = (v, unit, digits = 1) => (v === null || v === undefined || Number.isNaN(Number(v))) ? '—' : `${Number(v).toFixed(digits)} ${unit}`;
         const showError = (msg) => { $('errorBox').textContent = msg; $('errorBox').classList.remove('hidden'); };
         const clearError = () => $('errorBox').classList.add('hidden');
-        const fillList = (ul, items) => ul.replaceChildren(...items.map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
+        const fillList = (ul, items) => ul.replaceChildren(...items.map((t) => el('li', { textContent: t })));
+        function fileMsg(text, ok) {
+            const b = $('fileMsg');
+            b.textContent = text;
+            b.className = `mt-3 rounded-xl px-4 py-2.5 text-sm border ${ok ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-red-500/40 bg-red-500/10 text-red-300'}`;
+        }
 
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach((el) => el.classList.toggle('hidden', el.id !== tabId));
-            document.querySelectorAll('.tab-btn').forEach((btn) => {
-                const on = btn.dataset.tab === tabId;
-                btn.classList.toggle('active', on);
-                btn.classList.toggle('text-slate-400', !on);
-                btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        /* ---------- библиотека файлов ---------- */
+        const entries = (kind) => (CONFIG && CONFIG.library[kind]) || [];
+        const entry = (kind, id) => entries(kind).find((e) => e.id === id);
+
+        function buildRows() {
+            const rows = $('fileRows');
+            rows.replaceChildren();
+            for (const s of SLOTS) {
+                const sel = el('select', { id: `sel_${s.kind}`, className: 'field' });
+                const input = el('input', { type: 'file', accept: s.accept, multiple: !!s.multiple, className: 'sr-only', id: `up_${s.kind}` });
+                const up = el('label', { className: 'icon-btn', htmlFor: `up_${s.kind}`, title: s.hint || `Загрузить свой ${s.accept.toUpperCase()}` }, '⬆', el('span', { className: 'hidden sm:inline ml-1', textContent: 'Загрузить' }));
+                const dl = el('a', { className: 'icon-btn', id: `dl_${s.kind}`, title: 'Скачать файл', textContent: '⬇' });
+                const del = el('button', { type: 'button', className: 'icon-btn', id: `del_${s.kind}`, title: 'Удалить загруженный файл', textContent: '✕' });
+                const sum = el('p', { id: `sum_${s.kind}`, className: 'text-xs text-slate-400 mt-1.5' });
+                const det = el('details', { id: `det_${s.kind}`, className: 'mt-1 text-xs' });
+                rows.append(el('div', { className: 'rounded-xl border border-slate-700 bg-slate-900/50 p-3' },
+                    el('label', { className: 'lbl', htmlFor: `sel_${s.kind}`, textContent: s.label }),
+                    el('div', { className: 'flex gap-2' }, sel, up, input, dl, del), sum, det));
+                sel.addEventListener('change', () => { selected[s.kind] = sel.value; renderSlot(s.kind); onFilesChanged(s.kind); });
+                input.addEventListener('change', () => uploadFiles(s.kind, [...input.files]).finally(() => { input.value = ''; }));
+                del.addEventListener('click', () => deleteFile(s.kind));
+            }
+        }
+
+        function fillSelect(kind) {
+            const sel = $(`sel_${kind}`);
+            const opt = (e) => el('option', {
+                value: e.id, disabled: !e.ok,
+                textContent: `${e.ok ? '' : '✗ '}${e.name}${e.source === 'user' ? '  · загружен' : ''}${e.ok ? '' : ' (ошибка)'}`,
             });
+            const files = entries(kind);
+            if (kind === 'soil') {
+                sel.replaceChildren(
+                    el('optgroup', { label: 'Файлы .SOL' }, ...files.map(opt)),
+                    el('optgroup', { label: 'Встроенные профили aquacrop (сравнение)' },
+                        ...Object.entries(CONFIG.builtin_soils).map(([id, t]) => el('option', { value: id, textContent: t }))));
+            } else {
+                sel.replaceChildren(...files.map(opt));
+            }
+            const valid = (id) => (kind === 'soil' && CONFIG.builtin_soils[id]) || (entry(kind, id) && entry(kind, id).ok);
+            if (!valid(selected[kind])) selected[kind] = valid(CONFIG.defaults[kind]) ? CONFIG.defaults[kind] : (files.find((e) => e.ok) || {}).id;
+            sel.value = selected[kind] || '';
         }
-        document.querySelectorAll('.tab-btn').forEach((btn) => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
 
-        /* ---------- справочники с сервера ---------- */
-        function updateMaturity() {
-            const crop = CONFIG && CONFIG.crops && CONFIG.crops[$('crop').value];
-            const s = $('startDate').value;
-            if (!crop || !s) { $('endDate').value = ''; $('cycleHint').innerHTML = '&nbsp;'; return; }
-            const d = new Date(s + 'T00:00:00Z');
-            d.setUTCDate(d.getUTCDate() + crop.maturity);
-            $('endDate').value = d.toISOString().slice(0, 10);
-            $('cycleHint').textContent = `Цикл ${crop.maturity} дн. (${crop.file})`;
+        function kvList(pairs) {
+            return el('dl', { className: 'kv mt-2' }, ...pairs.flatMap(([k, v]) => [el('dt', { textContent: k }), el('dd', { textContent: String(v) })]));
         }
 
-        function applyConfig() {
-            const w = CONFIG.planting;
-            $('startDate').min = w.min;
-            $('startDate').max = w.max;
-            if (!$('startDate').value) $('startDate').value = w.default;
-            $('startHint').textContent = `Погода ${CONFIG.weather.start} … ${CONFIG.weather.end}; посев с ${w.window_md[0].split('-').reverse().join('.')} по ${w.window_md[1].split('-').reverse().join('.')}`;
+        function renderSlot(kind) {
+            const id = selected[kind];
+            const e = entry(kind, id);
+            const builtinSoil = kind === 'soil' && CONFIG.builtin_soils[id];
+            const sum = $(`sum_${kind}`), det = $(`det_${kind}`);
+            det.replaceChildren(); det.hidden = true; det.open = false;
+            $(`dl_${kind}`).hidden = !e;
+            if (e) { $(`dl_${kind}`).href = `/api/files/download?id=${encodeURIComponent(id)}`; }
+            $(`del_${kind}`).hidden = !(e && e.source === 'user');
+            if (builtinSoil) { sum.textContent = 'Встроенный однородный профиль пакета aquacrop - для сравнения с вашей почвой.'; return; }
+            if (!e) { sum.textContent = 'Нет подходящих файлов - загрузите свой.'; return; }
+            const s = e.summary || {};
+            sum.textContent = s.text || '';
+            sum.className = `text-xs mt-1.5 ${(kind === 'cli' && !s.has_target_year) || s.title_mismatch ? 'text-amber-300' : 'text-slate-400'}`;
+            let body = null;
+            if (kind === 'crop') {
+                body = kvList([['Описание', s.title || '—'], ['Цикл', `${s.cycle_days} дн. (${s.calendar})`], ['Всходы / цветение / старение', `${s.emergence} / ${s.flowering} / ${s.senescence} дн.`],
+                    ['Tbase / Tupp', `${s.tbase} / ${s.tupp} °C`], ['CCx, CGC', `${s.ccx}, ${s.cgc}`], ['HI0', `${Number(s.hi0_pct).toFixed(0)} %`], ['WP*', `${s.wp} г/м²`], ['Макс. глубина корней', `${s.zmax} м`]]);
+            } else if (kind === 'soil') {
+                body = el('div', { className: 'mt-2' }, kvList([['CN', s.cn], ['REW', `${s.rew} мм`], ['Глубина', `${s.depth} м`]]),
+                    el('table', { className: 'mini mt-2' },
+                        el('thead', {}, el('tr', {}, ...['Слой, м', 'Описание', 'SAT', 'FC', 'WP', 'Ksat'].map((h) => el('th', { textContent: h })))),
+                        el('tbody', {}, ...(s.horizons || []).map((h) => el('tr', {}, ...[h.thickness, h.description, h.sat, h.fc, h.wp, h.ksat].map((v) => el('td', { textContent: v })))))));
+            } else if (kind === 'gwt') {
+                body = kvList([['Заголовок файла', s.title || '—'], ['Режим', s.mode_text], ...(s.depth !== undefined ? [['Глубина в данных', `${s.depth} м`]] : []),
+                    ...(s.title_mismatch ? [['Внимание', 'число в заголовке не совпадает с данными - используется значение из данных']] : [])]);
+            } else if (kind === 'cli') {
+                const ss = s.season || {};
+                body = kvList([['Станция', s.station], ['Период', `${s.start} … ${s.end}`], ['Файлы', Object.values(s.files || {}).join(', ')],
+                    ...(s.season ? [[`${CONFIG.target_year}, апр-сен`, `осадки ${ss.rain} мм · ETo ${ss.eto} мм · Tср ${ss.tmean} °C`]] : [['Внимание', `нет ${CONFIG.target_year} года`]])]);
+            } else if (kind === 'man') {
+                body = kvList([['Мульча', `${s.mulch_pct} %`], ['Стресс плодородия', `${s.fertility_stress_pct} % (движок не моделирует)`],
+                    ['Сорняки', `${s.weed_cover_pct} % (движок не моделирует)`], ['Валики', `${s.bund_height_m} м`]]);
+            }
+            if (body) { det.hidden = false; det.append(el('summary', { className: 'cursor-pointer text-slate-500 hover:text-slate-300', textContent: 'Параметры файла' }), body); }
+        }
 
-            const soilSel = $('soil');
-            soilSel.replaceChildren(...Object.entries(CONFIG.soils).map(([k, v]) => {
-                const o = document.createElement('option'); o.value = k; o.textContent = v; return o;
-            }));
-            soilSel.value = CONFIG.default_soil;
-
-            const g = CONFIG.groundwater;
-            $('gwDepth').min = g.min; $('gwDepth').max = g.max; $('gwDepth').value = g.default;
-            $('gwHint').textContent = `По ${g.file}: ${g.default} м; допустимо ${g.min}-${g.max} м`;
+        function onFilesChanged(kind) {
+            if (kind === 'gwt' || kind === null) {
+                const e = entry('gwt', selected.gwt), s = (e && e.summary) || {};
+                const gw = $('gwDepth');
+                if (s.mode === 1) {
+                    gw.disabled = false; gw.value = s.depth;
+                    $('gwHint').textContent = `По файлу: ${s.depth} м; можно изменить (ИИ обучен на ${CONFIG.groundwater.min}-${CONFIG.groundwater.max} м)`;
+                } else {
+                    gw.disabled = true; gw.value = '';
+                    $('gwHint').textContent = s.mode === 0 ? 'В выбранном .GWT грунтовых вод нет' : 'Переменный уровень - глубины берутся из файла';
+                }
+            }
             updateMaturity();
         }
 
-        async function loadConfig() {
-            try {
-                const r = await fetch('/api/config');
-                const data = await r.json();
-                if (!r.ok || data.success === false) throw new Error(data.error || `HTTP ${r.status}`);
-                CONFIG = data;
-                applyConfig();
-            } catch (e) {
-                showError('Не удалось загрузить настройки с сервера: ' + e.message);
-            }
+        function updateMaturity() {
+            const e = entry('crop', selected.crop), s = (e && e.summary) || {};
+            const d0 = $('startDate').value;
+            if (!s.cycle_days || !d0) { $('endDate').value = ''; $('cycleHint').innerHTML = '&nbsp;'; return; }
+            const d = new Date(d0 + 'T00:00:00Z');
+            d.setUTCDate(d.getUTCDate() + Number(s.cycle_days));
+            $('endDate').value = d.toISOString().slice(0, 10);
+            $('cycleHint').textContent = `Цикл ${s.cycle_days} дн.${s.calendar && s.calendar.includes('GDD') ? ' (≈, культура в градусо-днях)' : ''}`;
         }
-        $('crop').addEventListener('change', updateMaturity);
-        $('startDate').addEventListener('change', updateMaturity);
 
-        /* ---------- отрисовка ---------- */
-        function renderEnv(env) {
-            const box = $('envList');
-            box.replaceChildren();
-            if (!env) return;
-            const rows = [['Engine', env.engine], ['Climate', env.climate], ['Crop', env.crop], ['Soil', env.soil],
-                          ['Groundwater', env.groundwater], ['Management', env.management], ['Initial water', env.initial_water]];
-            for (const [k, v] of rows) {
-                const p = document.createElement('p');
-                const s = document.createElement('span');
-                s.className = 'text-amber-500';
-                s.textContent = k + ': ';
-                p.append(s, document.createTextNode(v || '—'));
-                box.appendChild(p);
-            }
-            const nm = env.not_modeled || [];
-            fillList($('notModeledList'), nm);
-            $('notModeledBox').classList.toggle('hidden', nm.length === 0);
+        function applyConfig() {
+            $('subtitle').textContent = `AquaCrop + ИИ-суррогат · ${CONFIG.region} · целевой год ${CONFIG.target_year}`;
+            for (const s of SLOTS) { fillSelect(s.kind); renderSlot(s.kind); }
+            const w = CONFIG.planting;
+            $('startDate').min = w.min; $('startDate').max = w.max;
+            if (!$('startDate').value) $('startDate').value = w.default;
+            $('startHint').textContent = `Целевой год ${CONFIG.target_year}: посев с ${w.min.slice(8)}.${w.min.slice(5, 7)} по ${w.max.slice(8)}.${w.max.slice(5, 7)}`;
+            onFilesChanged(null);
         }
+
+        async function loadConfig() {
+            const r = await fetch('/api/config');
+            const data = await r.json();
+            if (!r.ok || data.success === false) throw new Error(data.error || `HTTP ${r.status}`);
+            CONFIG = data;
+            applyConfig();
+        }
+
+        /* ---------- загрузка / удаление ---------- */
+        function toBase64(buf) {
+            const bytes = new Uint8Array(buf);
+            let s = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            return btoa(s);
+        }
+
+        async function uploadFiles(kind, files) {
+            if (!files.length) return;
+            // ряды погоды раньше .CLI: тогда .CLI сразу находит свои файлы
+            files.sort((a, b) => (a.name.toLowerCase().endsWith('.cli')) - (b.name.toLowerCase().endsWith('.cli')));
+            const done = [], errors = [];
+            let pick = null;
+            for (const f of files) {
+                try {
+                    if (f.size > CONFIG.upload.max_bytes) throw new Error('файл больше 2 МБ');
+                    const r = await fetch('/api/files', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: f.name, content_b64: toBase64(await f.arrayBuffer()) }) });
+                    const d = await r.json();
+                    if (!r.ok || !d.success) throw new Error(d.error || `HTTP ${r.status}`);
+                    done.push(`${f.name}${d.replaced ? ' (заменён)' : ''}`);
+                    if (d.kind === kind) pick = d.id;
+                    if (d.complete === false && d.note) errors.push(`${f.name}: ${d.note}`);
+                } catch (e) {
+                    errors.push(e.message.startsWith(f.name) ? e.message : `${f.name}: ${e.message}`);
+                }
+            }
+            try { await loadConfig(); } catch (e) { errors.push('Не удалось обновить список: ' + e.message); }
+            if (pick && entry(kind, pick) && entry(kind, pick).ok) {
+                selected[kind] = pick; $(`sel_${kind}`).value = pick; renderSlot(kind); onFilesChanged(kind);
+            }
+            fileMsg([done.length ? `Загружено: ${done.join(', ')}` : '', ...errors].filter(Boolean).join(' · '), errors.length === 0);
+        }
+
+        async function deleteFile(kind) {
+            const id = selected[kind];
+            if (!id || !id.startsWith('user_files/') || !confirm(`Удалить ${id.slice(11)}?`)) return;
+            const r = await fetch(`/api/files?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+            const d = await r.json();
+            if (!r.ok || !d.success) return fileMsg('Не удалось удалить: ' + (d.error || r.status), false);
+            selected[kind] = null;
+            await loadConfig();
+            fileMsg(`Удалён: ${id.slice(11)}`, true);
+        }
+
+        /* ---------- вкладки и графики ---------- */
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach((x) => x.classList.toggle('hidden', x.id !== tabId));
+            document.querySelectorAll('.tab-btn').forEach((b) => {
+                const on = b.dataset.tab === tabId;
+                b.classList.toggle('active', on); b.classList.toggle('text-slate-400', !on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+        }
+        document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
         function renderCharts(ch) {
+            if (!window.Chart) return;
             const labels = ch.dates.map((d) => d.slice(8, 10) + '.' + d.slice(5, 7));
             if (canopyChart) canopyChart.destroy();
             if (rainChart) rainChart.destroy();
             const grid = { color: '#334155' };
-
             canopyChart = new Chart($('canopyChart'), {
                 type: 'line',
                 data: { labels, datasets: [
                     { label: 'Canopy Cover (CC, %)', data: ch.canopy_cover, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
                     { label: 'Transpiration (Tr, mm/day)', data: ch.transpiration, borderColor: '#06b6d4', borderDash: [4, 4], fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y1' },
                 ] },
-                options: {
-                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        y: { position: 'left', min: 0, max: 100, title: { display: true, text: 'CC (%)', color: '#22c55e' }, grid },
-                        y1: { position: 'right', min: 0, suggestedMax: 8, title: { display: true, text: 'Tr (mm/day)', color: '#06b6d4' }, grid: { drawOnChartArea: false } },
-                        x: { grid, ticks: { maxTicksLimit: 12 } },
-                    },
-                },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    scales: { y: { position: 'left', min: 0, max: 100, title: { display: true, text: 'CC (%)', color: '#22c55e' }, grid },
+                              y1: { position: 'right', min: 0, suggestedMax: 8, title: { display: true, text: 'Tr (mm/day)', color: '#06b6d4' }, grid: { drawOnChartArea: false } },
+                              x: { grid, ticks: { maxTicksLimit: 12 } } } },
             });
-
             rainChart = new Chart($('rainChart'), {
                 data: { labels, datasets: [
                     { type: 'bar', label: 'Осадки (мм/сут)', data: ch.rain, backgroundColor: '#3b82f6' },
                     { type: 'line', label: 'Капиллярный подъём (мм/сут)', data: ch.capillary_rise, borderColor: '#67e8f9', pointRadius: 0, tension: 0.3 },
                 ] },
-                options: {
-                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    scales: { y: { beginAtZero: true, grid }, x: { grid, ticks: { maxTicksLimit: 12 } } },
-                },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    scales: { y: { beginAtZero: true, grid }, x: { grid, ticks: { maxTicksLimit: 12 } } } },
             });
+        }
+
+        function renderEnv(env) {
+            const box = $('envList');
+            box.replaceChildren();
+            if (!env) return;
+            for (const [k, v] of [['Engine', env.engine], ['Climate', env.climate], ['Crop', env.crop], ['Soil', env.soil],
+                                  ['Groundwater', env.groundwater], ['Management', env.management], ['Initial water', env.initial_water]]) {
+                box.append(el('p', {}, el('span', { className: 'text-amber-500', textContent: k + ': ' }), v || '—'));
+            }
+            fillList($('notModeledList'), env.not_modeled || []);
+            $('notModeledBox').classList.toggle('hidden', !(env.not_modeled || []).length);
         }
 
         function renderResult(data, initWater) {
@@ -319,68 +447,63 @@
             $('deltaResult').textContent = '';
             $('aiNote').textContent = '';
             if (ai === null || ai === undefined) {
-                $('aiNote').textContent = 'ИИ-прогноз недоступен: ' + (data.ai_error || 'неизвестная причина');
+                $('aiNote').textContent = 'ИИ не показан: ' + (data.ai_error || 'неизвестная причина');
             } else {
                 const diff = ai - data.yield_tonne_ha;
                 $('deltaResult').textContent = `Расхождение ИИ и физики: ${diff >= 0 ? '+' : ''}${diff.toFixed(2)} т/га`;
                 if (data.ai_in_domain === false) $('aiNote').textContent = `Внимание: ${data.ai_note}. ИИ экстраполирует - верьте физической модели.`;
             }
-
             $('detailsResult').textContent = `${data.location} | ${data.period} | влажность ${initWater} | ${data.irrigation === 'Irrigated' ? 'орошение' : 'богара'}`;
-            const m = data.ai_metrics;
-            const n = CONFIG && CONFIG.ai && CONFIG.ai.n_samples;
-            $('aiMeta').textContent = m ? `ИИ обучен на ${n || '?'} расчётах AquaCrop (погода 2021-2024): R² = ${m.r2_test}, RMSE = ${m.rmse_test_t_ha} т/га на отложенной выборке` : '';
+            const m = CONFIG && CONFIG.ai && CONFIG.ai.available ? CONFIG.ai : null;
+            const speed = `Физика: ${(data.physics_ms / 1000).toFixed(2)} с${data.ai_ms !== undefined ? ` · ИИ: ${data.ai_ms.toFixed(2)} мс` : ''}`;
+            $('aiMeta').textContent = m ? `${speed} · ИИ обучен на ${m.n_samples} расчётах AquaCrop (${m.target_year}): R² = ${m.metrics.r2_test}, RMSE = ${m.metrics.rmse_test_t_ha} т/га` : speed;
 
             const wb = data.water_balance || {};
-            $('wbRain').textContent = num(wb.rain, 'mm');
-            $('wbIrr').textContent = num(wb.irrigation, 'mm');
-            $('wbCR').textContent = num(wb.capillary_rise, 'mm');
-            $('wbInf').textContent = num(wb.infiltrated, 'mm');
-            $('wbTr').textContent = num(wb.transpiration, 'mm');
-            $('wbE').textContent = num(wb.evaporation, 'mm');
-            $('wbRO').textContent = num(wb.runoff, 'mm');
-            $('wbDP').textContent = num(wb.deep_percolation, 'mm');
-
+            [['wbRain', wb.rain], ['wbIrr', wb.irrigation], ['wbCR', wb.capillary_rise], ['wbInf', wb.infiltrated],
+             ['wbTr', wb.transpiration], ['wbE', wb.evaporation], ['wbRO', wb.runoff], ['wbDP', wb.deep_percolation]]
+                .forEach(([id, v]) => { $(id).textContent = num(v, 'mm'); });
             const pr = data.production_details || {};
             $('bmActual').textContent = num(pr.actual_biomass, 't/ha', 2);
             $('bmHI').textContent = num(pr.harvest_index, '%');
             $('bmPot').textContent = num(pr.yield_potential, 't/ha', 2);
             $('bmCC').textContent = num(pr.max_canopy_cover, '%');
-
             renderEnv(data.environment);
             if (data.charts) renderCharts(data.charts);
             $('resultSection').classList.remove('hidden');
         }
 
-        /* ---------- отправка формы ---------- */
+        /* ---------- расчёт ---------- */
+        $('startDate').addEventListener('change', updateMaturity);
         $('predictForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             clearError();
-            const gw = parseFloat($('gwDepth').value);
-            const gwMin = CONFIG ? CONFIG.groundwater.min : 1, gwMax = CONFIG ? CONFIG.groundwater.max : 10;
-            if (!Number.isFinite(gw) || gw < gwMin || gw > gwMax) return showError(`Глубина грунтовых вод должна быть от ${gwMin} до ${gwMax} м`);
+            if (!CONFIG) return showError('Настройки ещё не загружены');
             if (!$('startDate').value) return showError('Укажите дату посева');
-
-            const initWater = document.querySelector('input[name="initWater"]:checked').value;
             const payload = {
-                crop: $('crop').value, irrigation: $('irrigation').value,
+                cliFile: selected.cli, cropFile: selected.crop, soilFile: selected.soil, gwtFile: selected.gwt, manFile: selected.man,
                 startDate: $('startDate').value.replace(/-/g, '/'),
-                soil: $('soil').value, gwDepth: String(gw), initWater,
+                irrigation: $('irrigation').value,
+                initWater: document.querySelector('input[name="initWater"]:checked').value,
             };
-
+            if (!$('gwDepth').disabled) {
+                const gw = parseFloat($('gwDepth').value);
+                const [lo, hi] = CONFIG.groundwater.valid;
+                if (!Number.isFinite(gw) || gw < lo || gw > hi) return showError(`Глубина грунтовых вод должна быть от ${lo} до ${hi} м`);
+                payload.gwDepth = String(gw);
+            }
             const btn = $('submitBtn');
             btn.disabled = true;
             btn.firstElementChild.textContent = 'Расчёт симуляции…';
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), 130000);
             try {
-                const resp = await fetch('/api/predict', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload), signal: ctrl.signal,
-                });
+                const resp = await fetch('/api/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctrl.signal });
                 const data = await resp.json().catch(() => ({ success: false, error: `Сервер ответил ${resp.status}` }));
-                if (!resp.ok || !data.success) return showError('Ошибка расчёта: ' + (data.error || `HTTP ${resp.status}`));
-                renderResult(data, initWater);
+                if (!resp.ok || !data.success) {
+                    $('resultSection').classList.add('hidden');      // не показывать старый результат под новой ошибкой
+                    return showError('Ошибка расчёта: ' + (data.error || `HTTP ${resp.status}`));
+                }
+                renderResult(data, payload.initWater);
             } catch (err) {
                 showError(err.name === 'AbortError' ? 'Расчёт занял слишком много времени' : 'Нет соединения с сервером');
             } finally {
@@ -390,7 +513,8 @@
             }
         });
 
-        loadConfig();
+        buildRows();
+        loadConfig().catch((e) => showError('Не удалось загрузить настройки с сервера: ' + e.message));
     </script>
 </body>
 </html>

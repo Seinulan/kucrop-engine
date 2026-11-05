@@ -87,6 +87,18 @@ CRO_MAP = {
     67: ("b_HI", "negative impact", None),
     68: ("dHI0", "allowable maximum increase", None),
 }
+# фенология в градусо-днях (используется, если цикл задан в GDD: строка 6 = 2)
+CRO_GDD_MAP = {
+    69: ("Emergence", "gddays: from sowing to emergence"),
+    70: ("MaxRooting", "gddays: from sowing to maximum rooting"),
+    71: ("Senescence", "gddays: from sowing to start senescence"),
+    72: ("Maturity", "gddays: from sowing to maturity"),
+    73: ("HIstart", "gddays: from sowing to flowering"),
+    74: ("Flowering", "length of the flowering stage"),
+    75: ("CGC", "cgc for ggdays"),
+    76: ("CDC", "cdc for ggdays"),
+    77: ("YldForm", "gddays: building-up of harvest index"),
+}
 # строки, которые читаются, но не являются параметрами Crop
 CRO_EXTRA = {
     4: ("crop_type_file", "crop"),                  # 1 листовые, 2 зерновые/плодовые, 3 корнеплоды
@@ -134,8 +146,8 @@ def read_cro(path) -> CropFile:
         extra[key] = get(n, kw)
 
     calendar = int(params["CalendarType"]) == 1
-    if not calendar:
-        raise ValueError(f"{Path(path).name}: фенология задана в градусо-днях (GDD); поддерживаются только календарные дни")
+    if int(params["CalendarType"]) not in (1, 2):
+        raise ValueError(f"{Path(path).name}: неизвестный тип цикла {params['CalendarType']} (1 - дни, 2 - градусо-дни)")
 
     # целые значения - целыми
     for k in ("CalendarType", "ETadj", "EmergenceCD", "MaxRootingCD", "SenescenceCD", "MaturityCD",
@@ -155,9 +167,19 @@ def read_cro(path) -> CropFile:
     params["SwitchGDD"] = 0
     if extra["dry_matter_pct"] > 0:
         params["YldWC"] = extra["dry_matter_pct"]
-    # при календарном цикле значения в GDD не используются (как у встроенных культур OSPy)
-    for k in ("Emergence", "MaxRooting", "Senescence", "Maturity", "HIstart", "Flowering", "YldForm", "CGC", "CDC"):
-        params[k] = -9.0
+    if calendar:
+        # при календарном цикле значения в GDD не используются (как у встроенных культур OSPy)
+        for k in ("Emergence", "MaxRooting", "Senescence", "Maturity", "HIstart", "Flowering", "YldForm", "CGC", "CDC"):
+            params[k] = -9.0
+    else:
+        for n, (attr, kw) in CRO_GDD_MAP.items():
+            v = get(n, kw)
+            if v <= 0:
+                raise ValueError(f"{Path(path).name}, строка {n}: цикл в градусо-днях, но значение не задано ({v:g})")
+            params[attr] = v
+        params["CalendarType"] = 2
+    if params["MaturityCD"] <= 0:
+        raise ValueError(f"{Path(path).name}: не задана длина цикла в днях (строка 55) - нужна для выбора даты уборки")
 
     return CropFile(path=str(path), title=title, version=version, params=params, extra=extra,
                     calendar_days=calendar)
@@ -235,11 +257,33 @@ class GroundwaterFile:
     path: str
     title: str
     mode: int            # 0 - нет грунтовых вод, 1 - постоянная глубина, 2 - переменная
-    records: list        # [(день, глубина м, ECw dS/m)]
+    records: list        # [(день, глубина м, ECw dS/m)]; день 1 = first_date
+    first_date: tuple = None   # (год, месяц, день) для режима 2; год 1901 = не привязан к году
 
     @property
     def constant_depth(self):
         return self.records[0][1] if self.mode == 1 and self.records else None
+
+    def daily_depths(self, start, days: int) -> list:
+        """Глубина на каждый день сезона (режим 2: линейная интерполяция, за краями - крайние значения)."""
+        import datetime as _dt
+        y, m, d = self.first_date or (start.year, 1, 1)
+        if y <= 1901:
+            y = start.year
+        base = _dt.date(y, m, d)
+        xs = [(base + _dt.timedelta(days=r[0] - 1) - start.date()).days for r in self.records]
+        ys = [r[1] for r in self.records]
+        out = []
+        for t in range(days):
+            if t <= xs[0]:
+                out.append(ys[0])
+            elif t >= xs[-1]:
+                out.append(ys[-1])
+            else:
+                i = next(k for k in range(1, len(xs)) if xs[k] >= t)
+                f = (t - xs[i - 1]) / (xs[i] - xs[i - 1])
+                out.append(ys[i - 1] + f * (ys[i] - ys[i - 1]))
+        return out
 
 
 def read_gwt(path) -> GroundwaterFile:
@@ -253,6 +297,17 @@ def read_gwt(path) -> GroundwaterFile:
             break
     if mode is None:
         raise ValueError(f"{Path(path).name}: не найден режим грунтовых вод")
+    if mode not in (0, 1, 2):
+        raise ValueError(f"{Path(path).name}: неизвестный режим грунтовых вод {mode} (0 - нет, 1 - постоянный, 2 - переменный)")
+    first = {}
+    for v, desc in vals[1:10]:
+        dl = desc.lower()
+        if v is None:
+            continue
+        for key in ("day", "month", "year"):
+            if dl.startswith(f"first {key}"):
+                first[key] = int(v)
+    first_date = (first["year"], first["month"], first["day"]) if len(first) == 3 else None
     records = []
     sep = next((i for i, l in enumerate(raw) if l.strip().startswith("=")), None)
     if sep is not None:
@@ -265,7 +320,14 @@ def read_gwt(path) -> GroundwaterFile:
                     pass
     if mode in (1, 2) and not records:
         raise ValueError(f"{Path(path).name}: нет строк с глубиной грунтовых вод")
-    return GroundwaterFile(path=str(path), title=title, mode=mode, records=records)
+    for _, depth, _ in records:
+        if not (0 < depth <= 30):
+            raise ValueError(f"{Path(path).name}: глубина {depth} м вне разумных пределов (0-30 м)")
+    if mode == 2:
+        days = [r[0] for r in records]
+        if days != sorted(days) or len(set(days)) != len(days):
+            raise ValueError(f"{Path(path).name}: дни наблюдений должны идти по возрастанию без повторов")
+    return GroundwaterFile(path=str(path), title=title, mode=mode, records=records, first_date=first_date)
 
 
 # --------------------------------------------------------------------------- #

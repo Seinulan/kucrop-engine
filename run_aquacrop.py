@@ -1,10 +1,12 @@
 """
 run_aquacrop.py - физический расчёт KUCrop (AquaCrop-OSPy), вызывается из server.js.
 
-  python run_aquacrop.py '{"crop":"Sunflower","startDate":"2024/05/25","soil":"Poltavka_NKA",
-                           "gwDepth":"1.9","initWater":"FC","irrigation":"Rainfed"}'
+  python run_aquacrop.py '{"cropFile":"final.CRO","soilFile":"Poltavka_NKA.SOL","gwtFile":"Poltavka_0712.GWT",
+                           "manFile":"final_2.MAN","cliFile":"Poltavka.CLI","startDate":"2024/05/25",
+                           "initWater":"FC","irrigation":"Rainfed"}'
   python run_aquacrop.py --config     # справочники и значения по умолчанию из файлов (для /api/config)
-  python run_aquacrop.py --inspect    # что прочитано из ваших файлов AquaCrop + версия пакета aquacrop
+  python run_aquacrop.py --inspect    # все файлы AquaCrop в проекте и что из них прочитано
+  python run_aquacrop.py --validate user_files/X.CRO   # проверка загруженного файла (вызывает сервер)
 
 Ответ - JSON между маркерами ---JSON_OUTPUT_START--- / ---JSON_OUTPUT_END---.
 При ошибке: {"success": false, "error": "..."} и код выхода 1. Выдуманных значений нет.
@@ -31,28 +33,15 @@ def inspect():
     except Exception:
         pass
     import aquacrop
-    from kucrop_core import CROPS, FILES, crop_file, gw_file, load_weather, man_file, not_modeled_notes, soil_file
+    from kucrop_core import KIND_LABEL, REGION, TARGET_YEAR, library
 
-    print("Пакет aquacrop:", getattr(aquacrop, "__version__", "версия не указана"), "-", aquacrop.__file__)
-    _, w = load_weather()
-    print(f"Погода: {w['files']}  {w['start']} .. {w['end']} ({w['days']} дн.), полные годы {w['years']}")
-    for name, spec in CROPS.items():
-        cf = crop_file(name)
-        p = cf.params
-        print(f"{spec['file']:11s} {name:9s} цикл {cf.maturity_days} дн., всходы {p['EmergenceCD']}, цветение {p['HIstartCD']}, "
-              f"Tbase {p['Tbase']:g}, Tupp {p['Tupp']:g}, CCx {p['CCx']:g}, CGC {p['CGC_CD']:g}, HI0 {p['HI0']:g}, WP* {p['WP']:g}")
-    s = soil_file()
-    print(f"{FILES['sol']}: CN {s.cn:g}, REW {s.rew:g} мм, глубина {s.depth:g} м")
-    for h in s.horizons:
-        print(f"   {h.thickness:g} м {h.description}: SAT {h.sat:g}  FC {h.fc:g}  WP {h.wp:g}  Ksat {h.ksat:g}  CRa {h.cra:g}  CRb {h.crb:g}")
-    g = gw_file()
-    print(f"{FILES['gwt']}: '{g.title}', режим {g.mode}, записи {g.records}")
-    if g.constant_depth is not None and str(g.constant_depth) not in g.title:
-        print(f"   ВНИМАНИЕ: в заголовке файла одна глубина, а в данных {g.constant_depth} м - используется значение из данных")
-    m = man_file()
-    print(f"{FILES['man']}: мульча {m.mulch_pct:g}%, плодородие {m.fertility_stress_pct:g}%, сорняки {m.weed_cover_pct:g}%")
-    for n in not_modeled_notes():
-        print("   НЕ МОДЕЛИРУЕТСЯ:", n)
+    print("Пакет aquacrop:", getattr(aquacrop, "__version__", "версия не указана (см. pip show aquacrop)"))
+    print(f"Регион: {REGION}; целевой год {TARGET_YEAR}\n")
+    for kind, entries in library().items():
+        for e in entries:
+            src = "загружен" if e["source"] == "user" else "встроен"
+            text = e["summary"]["text"] if e["ok"] else "ОШИБКА: " + e["error"]
+            print(f"{KIND_LABEL[kind]:16s} {e['id']:28s} [{src}] {text}")
 
 
 def main():
@@ -64,6 +53,10 @@ def main():
         if args and args[0] == "--inspect":
             inspect()
             return
+        if args and args[0] == "--validate":
+            from pathlib import Path
+            from kucrop_core import validate_upload
+            emit({"success": True, **validate_upload(Path(args[1]))})
         raw = json.loads(args[0]) if args else {}
         if not isinstance(raw, dict):
             raise ValueError("Параметры должны быть JSON-объектом")

@@ -1,14 +1,17 @@
 """
-generate_model.py - обучение ИИ-суррогата поверх физического ядра.
+generate_model.py - обучение ИИ-суррогата поверх физического ядра (целевой год TARGET_YEAR = 2024).
 
   1. Прогоняет N симуляций AquaCrop через ТОТ ЖЕ simulate(), что и сайт:
-     культура x почва x орошение x влажность x год погоды, плюс случайные глубина грунтовых вод и дата посева.
-  2. Обучает ExtraTrees (по умолчанию) или RandomForest; честная оценка: отложенная выборка (R2, RMSE, MAE),
-     кросс-валидация и проверка на целиком отложенном годе погоды.
-  3. Пишет aquacrop_model.onnx, model_meta.json (порядок признаков, диапазоны, метрики) и training_data.csv.
+     культура (final/Wheat/Barley.CRO) x почва x орошение x начальная влажность,
+     плюс случайные глубина грунтовых вод и дата посева в окне целевого года.
+     Климат, .MAN и тип грунтовых вод - файлы по умолчанию (kucrop_core.DEFAULTS).
+  2. Обучает ExtraTrees (или RandomForest); честная оценка: отложенная выборка 20%, кросс-валидация,
+     ошибка по каждой культуре; замер скорости физики и ИИ.
+  3. Пишет aquacrop_model.onnx, model_meta.json (признаки, диапазоны, метрики, хеши файлов обучения)
+     и training_data.csv. Хеши нужны сайту: ИИ показывается только для тех файлов, на которых он обучен.
 
-  python generate_model.py            # ~720 симуляций (несколько минут)
-  python generate_model.py --n 150    # быстрый пробный прогон
+  python generate_model.py            # ~1440 симуляций (несколько минут)
+  python generate_model.py --n 200    # быстрый пробный прогон
 """
 import argparse
 import itertools
@@ -22,8 +25,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from kucrop_core import (BASE_DIR, CROPS, GW_TRAIN_RANGE, INIT_WATER, IRRIGATION, PLANTING_TRAIN, SOILS,
-                         feature_names, load_weather, make_features, normalize_params, simulate)
+from kucrop_core import (BASE_DIR, DEFAULTS, GW_TRAIN_RANGE, INIT_WATER, IRRIGATION, META_PATH, PLANTING_TRAIN,
+                         TARGET_YEAR, TRAIN_CROPS, TRAIN_SOILS, feature_names, make_features, normalize_params,
+                         simulate, training_fingerprint)
 from onnx_export import export, verify
 
 try:
@@ -44,19 +48,31 @@ def make_model(kind: str, **override):
     return getattr(ens, cls_name)(**{**params, **override})
 
 
-def sample_configs(n: int, seed: int, years: list):
+def sample_gw(rng) -> float:
+    """Глубина грунтовых вод: 60% в зоне влияния (1-3 м), 40% - глубже (3-10 м).
+    При равномерной выборке мелких глубин мало, и ИИ хуже ловит эффект капиллярного подъёма."""
+    lo, hi = GW_TRAIN_RANGE
+    if rng.random() < 0.6:
+        return round(float(rng.uniform(lo, 3.0)), 2)
+    return round(float(rng.uniform(3.0, hi)), 2)
+
+
+def sample_configs(n: int, seed: int):
     rng = np.random.default_rng(seed)
-    combos = list(itertools.product(CROPS, SOILS, IRRIGATION, INIT_WATER, years))
+    combos = list(itertools.product(TRAIN_CROPS.items(), TRAIN_SOILS.items(), IRRIGATION, INIT_WATER))
     reps = max(1, math.ceil(n / len(combos)))
     (m1, d1), (m2, d2) = PLANTING_TRAIN
+    lo, hi = datetime(TARGET_YEAR, m1, d1), datetime(TARGET_YEAR, m2, d2)
     configs = []
-    for crop, soil, irr, iw, year in combos:
-        lo, hi = datetime(year, m1, d1), datetime(year, m2, d2)
+    for (crop, crop_file), (soil, soil_file), irr, iw in combos:
         for _ in range(reps):
             start = lo + timedelta(days=int(rng.integers(0, (hi - lo).days + 1)))
-            configs.append({"crop": crop, "soil": soil, "irrigation": irr, "initWater": iw,
-                            "gwDepth": round(float(rng.uniform(*GW_TRAIN_RANGE)), 2),
-                            "startDate": start.strftime("%Y/%m/%d")})
+            configs.append({"cropFile": crop_file, "soilFile": soil_file, "cliFile": DEFAULTS["cli"],
+                            "gwtFile": DEFAULTS["gwt"], "manFile": DEFAULTS["man"],
+                            "irrigation": irr, "initWater": iw,
+                            "gwDepth": sample_gw(rng),
+                            "startDate": start.strftime("%Y/%m/%d"),
+                            "_crop": crop, "_soil": soil})
     rng.shuffle(configs)
     return configs
 
@@ -70,7 +86,7 @@ def metrics(y_true, y_pred):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=720, help="примерное число симуляций")
+    ap.add_argument("--n", type=int, default=1440, help="примерное число симуляций")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default=str(BASE_DIR / "aquacrop_model.onnx"))
     ap.add_argument("--model", choices=list(MODELS), default="et", help="et = ExtraTrees (по умолчанию), rf = RandomForest")
@@ -80,9 +96,9 @@ def main():
 
     from sklearn.model_selection import cross_val_score, train_test_split
 
-    _, w = load_weather()
     names = feature_names()
     data_csv = BASE_DIR / "training_data.csv"
+    sim_seconds = None
     if args.reuse_data:
         if not data_csv.exists():
             raise SystemExit("Нет training_data.csv - запустите без --reuse-data")
@@ -90,80 +106,55 @@ def main():
         if [c for c in names if c not in df.columns]:
             raise SystemExit("training_data.csv собран с другими признаками - запустите без --reuse-data")
         print(f"Используются готовые данные: {len(df)} симуляций из training_data.csv")
-        configs = []
     else:
-        configs = sample_configs(args.n, args.seed, w["years"])
-        print(f"Обучение ИИ-суррогата: {len(configs)} симуляций AquaCrop, годы погоды {w['years']}")
-
-    rows, failures, t0 = [], [], time.time()
-    for i, cfg in enumerate(configs, 1):
-        try:
-            p = normalize_params(cfg)
-            res = simulate(cfg, detail=False)
-            rows.append({**dict(zip(feature_names(), make_features(p))), "yield": res["yield_tonne_ha"],
-                         "crop": cfg["crop"], "soil": cfg["soil"], "irrigation": cfg["irrigation"],
-                         "init_water": cfg["initWater"], "year": p["start"].year, "start": cfg["startDate"]})
-        except Exception as exc:
-            failures.append((cfg, f"{type(exc).__name__}: {exc}"))
-        if i % 50 == 0 or i == len(configs):
-            el = time.time() - t0
-            print(f"  {i}/{len(configs)}  ok={len(rows)} ошибок={len(failures)}  {el:.0f} с, осталось ~{el / i * (len(configs) - i):.0f} с", flush=True)
-
-    if failures:
-        print(f"\nНеудачных симуляций: {len(failures)}. Первые:")
-        for cfg, msg in failures[:3]:
-            print("  ", cfg, "->", msg)
-    if configs:
+        configs = sample_configs(args.n, args.seed)
+        print(f"Обучение ИИ-суррогата: {len(configs)} симуляций AquaCrop, целевой год {TARGET_YEAR}")
+        rows, failures, t0 = [], [], time.time()
+        for i, cfg in enumerate(configs, 1):
+            req = {k: v for k, v in cfg.items() if not k.startswith("_")}
+            try:
+                p = normalize_params(req)
+                res = simulate(req, detail=False)
+                rows.append({**dict(zip(names, make_features(p, names))), "yield": res["yield_tonne_ha"],
+                             "crop": cfg["_crop"], "soil": cfg["_soil"], "irrigation": cfg["irrigation"],
+                             "init_water": cfg["initWater"], "start": cfg["startDate"]})
+            except Exception as exc:
+                failures.append((req, f"{type(exc).__name__}: {exc}"))
+            if i % 100 == 0 or i == len(configs):
+                el = time.time() - t0
+                print(f"  {i}/{len(configs)}  ok={len(rows)} ошибок={len(failures)}  {el:.0f} с, "
+                      f"осталось ~{el / i * (len(configs) - i):.0f} с", flush=True)
+        sim_seconds = (time.time() - t0) / max(1, len(configs))
+        if failures:
+            print(f"\nНеудачных симуляций: {len(failures)}. Первые:")
+            for cfg, msg in failures[:3]:
+                print("  ", cfg, "->", msg)
         if len(failures) > 0.05 * len(configs) or len(rows) < 50:
             raise SystemExit("Слишком много неудачных симуляций - обучение остановлено (метки нельзя придумывать).")
         df = pd.DataFrame(rows)
         df.to_csv(data_csv, index=False)
+
     X = df[names].to_numpy(dtype=np.float32)
     y = df["yield"].to_numpy(dtype=np.float32)
     if float(np.std(y)) < 1e-3:
         raise SystemExit("Все урожаи одинаковы - физическая модель не реагирует на входы. Запустите python selfcheck.py")
 
     print("\nСредний урожай по факторам (т/га):")
-    for col in ("crop", "soil", "irrigation", "init_water", "year"):
+    for col in ("crop", "soil", "irrigation", "init_water"):
         print(f"   {col:11s}", df.groupby(col)["yield"].mean().round(2).to_dict())
 
-    # 1) случайная отложенная выборка 20%
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=args.seed)
-    rf = make_model(args.model).fit(Xtr, ytr)
-    m_test = metrics(yte, rf.predict(Xte))
-    # 2) кросс-валидация
+    model = make_model(args.model).fit(Xtr, ytr)
+    m_test = metrics(yte, model.predict(Xte))
+    te = pd.DataFrame(Xte, columns=names)
+    per_crop = {c: metrics(yte[te[f"crop_{c}"].to_numpy() == 1], model.predict(Xte[te[f"crop_{c}"].to_numpy() == 1]))
+                for c in TRAIN_CROPS if (te[f"crop_{c}"] == 1).sum() > 2}
     cv = cross_val_score(make_model(args.model, n_estimators=100), X, y, cv=5, scoring="r2")
-    # 3) отложенный год: модель не видела погоду этого года вовсе (честная проверка на новый сезон)
-    by_year = {}
-    for yr in w["years"]:
-        tr, te = df["year"] != yr, df["year"] == yr
-        m = make_model(args.model, n_estimators=100).fit(X[tr.values], y[tr.values])
-        by_year[str(yr)] = metrics(y[te.values], m.predict(X[te.values]))
 
-    # ошибка по культурам (на отложенной выборке) - видно, где суррогат слабее
-    te_crop = pd.DataFrame(Xte, columns=names)
-    per_crop = {}
-    for c in CROPS:
-        mask = te_crop[f"crop_{c}"].to_numpy() == 1
-        if mask.sum() > 2:
-            per_crop[c] = metrics(yte[mask], rf.predict(Xte[mask]))
-    report = {
-        "per_crop_test": per_crop,
-        "test_random_20pct": m_test,
-        "cv5_r2_mean": round(float(cv.mean()), 4), "cv5_r2_std": round(float(cv.std()), 4),
-        "leave_one_year_out": by_year,
-        "yield_mean_t_ha": round(float(np.mean(y)), 3), "yield_std_t_ha": round(float(np.std(y)), 3),
-        "n_train": int(len(ytr)), "n_test": int(len(yte)),
-        # плоские поля для интерфейса
-        "r2_test": m_test["r2"], "rmse_test_t_ha": m_test["rmse_t_ha"], "mae_test_t_ha": m_test["mae_t_ha"],
-    }
     print(f"\nОтложенная выборка 20%: R2={m_test['r2']}  RMSE={m_test['rmse_t_ha']} т/га  MAE={m_test['mae_t_ha']} т/га")
     for c, m in per_crop.items():
-        print(f"   {c:10s} R2={m['r2']}  RMSE={m['rmse_t_ha']} т/га")
-    print(f"Кросс-валидация (5): R2={report['cv5_r2_mean']} +/- {report['cv5_r2_std']}")
-    print("Отложенный год (погода года не участвовала в обучении):")
-    for yr, m in by_year.items():
-        print(f"   {yr}: R2={m['r2']}  RMSE={m['rmse_t_ha']} т/га")
+        print(f"   {c:10s} R2={m['r2']}  RMSE={m['rmse_t_ha']} т/га  MAE={m['mae_t_ha']} т/га")
+    print(f"Кросс-валидация (5): R2={cv.mean():.4f} +/- {cv.std():.4f}")
 
     final = make_model(args.model).fit(X, y)
     importances = sorted(zip(names, final.feature_importances_), key=lambda t: -t[1])
@@ -175,24 +166,47 @@ def main():
         raise SystemExit(f"ONNX расходится со sklearn (макс. {diff:.5f}) - файл не записан")
     Path(args.out).write_bytes(onnx_bytes)
 
+    # скорость: один прогноз ONNX против одного расчёта физики
+    import onnxruntime as ort
+    sess = ort.InferenceSession(onnx_bytes, providers=["CPUExecutionProvider"])
+    one = X[:1].astype(np.float32)
+    sess.run(None, {"float_input": one})
+    t = time.perf_counter()
+    for _ in range(200):
+        sess.run(None, {"float_input": one})
+    onnx_ms = (time.perf_counter() - t) / 200 * 1000
+
     meta = {
         "input_name": "float_input",
         "feature_names": names,
-        "categories": {"crop": list(CROPS), "soil": list(SOILS), "year": w["years"]},
+        "target_year": TARGET_YEAR,
+        "categories": {"crop": list(TRAIN_CROPS), "soil": list(TRAIN_SOILS)},
+        "training_files": training_fingerprint(),
+        "training_file_names": {**DEFAULTS, "crops": TRAIN_CROPS, "soils": TRAIN_SOILS},
         "ranges": {"gw_depth": list(GW_TRAIN_RANGE),
-                   "planting_doy": [int(df["planting_doy"].min()), int(df["planting_doy"].max())],
-                   "years": w["years"]},
+                   "planting_doy": [int(df["planting_doy"].min()), int(df["planting_doy"].max())]},
         "model": MODELS[args.model][0],
-        "metrics": report,
+        "metrics": {
+            "test_random_20pct": m_test, "per_crop_test": per_crop,
+            "cv5_r2_mean": round(float(cv.mean()), 4), "cv5_r2_std": round(float(cv.std()), 4),
+            "yield_mean_t_ha": round(float(np.mean(y)), 3), "yield_std_t_ha": round(float(np.std(y)), 3),
+            "n_train": int(len(ytr)), "n_test": int(len(yte)),
+            "r2_test": m_test["r2"], "rmse_test_t_ha": m_test["rmse_t_ha"], "mae_test_t_ha": m_test["mae_t_ha"],
+        },
+        "speed": {"physics_s_per_run": None if sim_seconds is None else round(sim_seconds, 3),
+                  "onnx_ms_per_prediction": round(onnx_ms, 3)},
         "feature_importance": {n: round(float(v), 4) for n, v in importances},
         "n_samples": int(len(df)),
         "exporter": exporter,
         "onnx_vs_sklearn_max_diff": diff,
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "note": "Суррогат воспроизводит AquaCrop только для погоды Полтавки 2021-2024 и диапазонов из 'ranges'.",
+        "note": f"Суррогат воспроизводит AquaCrop для {TARGET_YEAR} года и файлов из training_file_names. "
+                "Для других файлов сайт ИИ не показывает.",
     }
-    (BASE_DIR / "model_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nГотово: {Path(args.out).name} ({Path(args.out).stat().st_size / 1024:.0f} КБ, экспорт: {exporter}, "
+    META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    speed = meta["speed"]
+    print(f"\nСкорость: физика {speed['physics_s_per_run']} с/расчёт, ИИ (ONNX) {speed['onnx_ms_per_prediction']} мс/прогноз")
+    print(f"Готово: {Path(args.out).name} ({Path(args.out).stat().st_size / 1024:.0f} КБ, экспорт: {exporter}, "
           f"ONNX vs sklearn: {diff:.1e}), model_meta.json, training_data.csv")
 
 
