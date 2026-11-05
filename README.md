@@ -8,13 +8,13 @@ KUCrop Engine
 Запуск
 
 ```bash
-pip install -r requirements-train.txt   # aquacrop==3.1.0, numpy, pandas, scikit-learn, onnxruntime
+pip install -r requirements-train.txt    aquacrop==3.1.0, numpy, pandas, scikit-learn, onnxruntime
 npm install
 
 python selfcheck.py                      1. все строки [OK]
 python run_aquacrop.py --inspect         все файлы AquaCrop в проекте и что из них прочитано
 node server.js                           2. http://localhost:3000
-python generate_model.py                 (по желанию) переобучить ИИ, ~7 мин
+python generate_model.py                 *по желанию, переобучить ИИ, ~7 мин
 ```
 
 Ограничения
