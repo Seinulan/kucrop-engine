@@ -3,7 +3,7 @@ KUCrop Engine
 Веб-версия AquaCrop для Северо-Казахстанской области (СКО), Казахстан. Целевой год — 2024.
 
 Физика: AquaCrop-OSPy 3.1.0, Python-реализация методики ФАО AquaCrop. Расчёт собирается из файлов AquaCrop, как в настольной программе.
-*ИИ: ExtraTrees, обученный на 1800 расчётах этой физики для 2024 года. Экспортирован в ONNX и выполняется в Node.js примерно за 0.01 мс, тогда как физике нужно около 0.2 с.
+ИИ: ExtraTrees, обученный на 1800 расчётах этой физики для 2024 года. Экспортирован в ONNX и выполняется в Node.js примерно за 0.01 мс, тогда как физике нужно около 0.2 с.
 
 Запуск
 
@@ -16,15 +16,6 @@ python run_aquacrop.py --inspect         все файлы AquaCrop в прое�
 node server.js                           2. http://localhost:3000
 python generate_model.py                 (по желанию) переобучить ИИ, ~7 мин
 ```
-
-| Файл | Назначение |
-| `aquacrop_files.py` | чтение форматов AquaCrop 7.x |
-| `kucrop_core.py` | библиотека файлов, сборка модели, `simulate()`, применимость ИИ |
-| `run_aquacrop.py` | вызывается сервером: расчёт, `--config`, `--validate`, `--inspect` |
-| `server.js` | Express: `/api/config`, `/api/predict`, `/api/files` (загрузка, удаление, скачивание) |
-| `generate_model.py` | обучение ИИ: `aquacrop_model.onnx`, `model_meta.json`, `training_data.csv` |
-| `onnx_export.py` | экспорт в ONNX (skl2onnx или встроенный), сверка со sklearn |
-| `selfcheck.py` | 14 проверок физики и совпадения ИИ с физикой |
 
 Ограничения
 
