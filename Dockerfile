@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y curl && \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm install --omit=dev
 
+# для работы сайта нужен только физический движок; обучение ИИ - requirements-train.txt (локально)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+ENV PYTHON_BIN=python3
 EXPOSE 3000
 
 CMD ["node", "server.js"]

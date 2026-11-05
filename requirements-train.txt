@@ -1,0 +1,4 @@
+-r requirements.txt
+scikit-learn
+onnxruntime
+# skl2onnx - необязательно: без него работает встроенный экспортёр onnx_export.py

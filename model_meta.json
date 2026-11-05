@@ -1,0 +1,130 @@
+{
+  "input_name": "float_input",
+  "feature_names": [
+    "gw_depth",
+    "init_fc",
+    "irrigated",
+    "planting_doy",
+    "year_2021",
+    "year_2022",
+    "year_2023",
+    "year_2024",
+    "crop_Sunflower",
+    "crop_Wheat",
+    "crop_Barley",
+    "soil_Poltavka_NKA",
+    "soil_Loam",
+    "soil_SandyLoam"
+  ],
+  "categories": {
+    "crop": [
+      "Sunflower",
+      "Wheat",
+      "Barley"
+    ],
+    "soil": [
+      "Poltavka_NKA",
+      "Loam",
+      "SandyLoam"
+    ],
+    "year": [
+      2021,
+      2022,
+      2023,
+      2024
+    ]
+  },
+  "ranges": {
+    "gw_depth": [
+      1.0,
+      10.0
+    ],
+    "planting_doy": [
+      115,
+      167
+    ],
+    "years": [
+      2021,
+      2022,
+      2023,
+      2024
+    ]
+  },
+  "model": "ExtraTreesRegressor",
+  "metrics": {
+    "per_crop_test": {
+      "Sunflower": {
+        "r2": 0.9924,
+        "rmse_t_ha": 0.1019,
+        "mae_t_ha": 0.038
+      },
+      "Wheat": {
+        "r2": 0.9612,
+        "rmse_t_ha": 0.7065,
+        "mae_t_ha": 0.3227
+      },
+      "Barley": {
+        "r2": 0.9975,
+        "rmse_t_ha": 0.0628,
+        "mae_t_ha": 0.0338
+      }
+    },
+    "test_random_20pct": {
+      "r2": 0.971,
+      "rmse_t_ha": 0.4075,
+      "mae_t_ha": 0.1285
+    },
+    "cv5_r2_mean": 0.9762,
+    "cv5_r2_std": 0.0082,
+    "leave_one_year_out": {
+      "2021": {
+        "r2": -0.1064,
+        "rmse_t_ha": 2.0392,
+        "mae_t_ha": 0.9633
+      },
+      "2022": {
+        "r2": 0.8256,
+        "rmse_t_ha": 1.0498,
+        "mae_t_ha": 0.4703
+      },
+      "2023": {
+        "r2": 0.7728,
+        "rmse_t_ha": 1.2796,
+        "mae_t_ha": 0.702
+      },
+      "2024": {
+        "r2": 0.5587,
+        "rmse_t_ha": 1.5956,
+        "mae_t_ha": 0.8691
+      }
+    },
+    "yield_mean_t_ha": 2.462,
+    "yield_std_t_ha": 2.428,
+    "n_train": 1152,
+    "n_test": 288,
+    "r2_test": 0.971,
+    "rmse_test_t_ha": 0.4075,
+    "mae_test_t_ha": 0.1285
+  },
+  "feature_importance": {
+    "planting_doy": 0.3386,
+    "irrigated": 0.2146,
+    "init_fc": 0.1287,
+    "crop_Wheat": 0.115,
+    "year_2021": 0.0825,
+    "year_2024": 0.0393,
+    "soil_Poltavka_NKA": 0.033,
+    "gw_depth": 0.0171,
+    "year_2023": 0.0121,
+    "year_2022": 0.0105,
+    "soil_Loam": 0.003,
+    "soil_SandyLoam": 0.0024,
+    "crop_Barley": 0.0016,
+    "crop_Sunflower": 0.0016
+  },
+  "n_samples": 1440,
+  "exporter": "встроенный (onnx_export.py)",
+  "onnx_vs_sklearn_max_diff": 2.384185791015625e-05,
+  "trained_at": "2026-11-05T06:27:34+00:00",
+  "note": "Суррогат воспроизводит AquaCrop только для погоды Полтавки 2021-2024 и диапазонов из 'ranges'."
+}
