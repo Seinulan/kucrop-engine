@@ -24,8 +24,35 @@ const PY_TIMEOUT_MS = Number(process.env.PY_TIMEOUT_MS || 120000);
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const EXTENSIONS = ['.cro', '.sol', '.gwt', '.man', '.cli', '.tnx', '.eto', '.plu'];
 const MARK_RE = /---JSON_OUTPUT_START---\s*([\s\S]*?)\s*---JSON_OUTPUT_END---/;
+const LANGS = ['ru', 'kk', 'en'];
 const PARAM_KEYS = ['cliFile', 'cropFile', 'soilFile', 'gwtFile', 'manFile', 'startDate', 'gwDepth', 'initWater', 'irrigation',
                     'crop', 'soil'];   // crop/soil - старый формат запроса
+
+/* ---------- сообщения сервера на трёх языках ---------- */
+const SM = {
+  timeout: { ru: 'Расчёт превысил лимит времени ({s} с)', kk: 'Есептеу уақыт шегінен асып кетті ({s} с)', en: 'The calculation exceeded the time limit ({s} s)' },
+  no_python: { ru: 'Не удалось запустить Python ({py}): {msg}. Задайте PYTHON_BIN.', kk: 'Python іске қосылмады ({py}): {msg}. PYTHON_BIN орнатыңыз.', en: 'Could not start Python ({py}): {msg}. Set PYTHON_BIN.' },
+  no_result: { ru: 'Python не вернул результат', kk: 'Python нәтиже қайтармады', en: 'Python returned no result' },
+  calc_error: { ru: 'Ошибка расчёта', kk: 'Есептеу қатесі', en: 'Calculation error' },
+  bad_json: { ru: 'Python вернул некорректный JSON', kk: 'Python қате JSON қайтарды', en: 'Python returned invalid JSON' },
+  no_model: { ru: 'Нет aquacrop_model.onnx / model_meta.json - запустите python generate_model.py', kk: 'aquacrop_model.onnx / model_meta.json жоқ — python generate_model.py іске қосыңыз', en: 'aquacrop_model.onnx / model_meta.json are missing — run python generate_model.py' },
+  model_load: { ru: 'Не удалось загрузить ИИ-модель: {msg}', kk: 'ЖИ моделі жүктелмеді: {msg}', en: 'Could not load the AI model: {msg}' },
+  model_off: { ru: 'ИИ-модель не загружена', kk: 'ЖИ моделі жүктелмеген', en: 'The AI model is not loaded' },
+  ai_nan: { ru: 'ИИ вернул нечисловой результат', kk: 'ЖИ сандық емес нәтиже қайтарды', en: 'The AI returned a non-numeric result' },
+  ai_na: { ru: 'ИИ не применим к выбранным файлам', kk: 'ЖИ таңдалған файлдарға қолданылмайды', en: 'The AI does not apply to the selected files' },
+  ext: { ru: 'Можно загружать только {list}', kk: 'Тек {list} файлдарын жүктеуге болады', en: 'Only {list} files can be uploaded' },
+  name: { ru: 'Имя файла: только буквы, цифры, пробел и символы _ . ( ) -, до 80 символов', kk: 'Файл аты: тек әріптер, сандар, бос орын және _ . ( ) - белгілері, 80 таңбаға дейін', en: 'File name: letters, digits, spaces and _ . ( ) - only, up to 80 characters' },
+  empty: { ru: 'Пустой файл', kk: 'Бос файл', en: 'The file is empty' },
+  too_big: { ru: 'Файл больше 2 МБ', kk: 'Файл 2 МБ-тан үлкен', en: 'The file is larger than 2 MB' },
+  only_user: { ru: 'Удалять можно только загруженные файлы', kk: 'Тек жүктелген файлдарды жоюға болады', en: 'Only uploaded files can be deleted' },
+  not_found: { ru: 'Файл не найден', kk: 'Файл табылмады', en: 'File not found' },
+};
+const langOf = (req) => {
+  const l = String((req.get && req.get('x-lang')) || (req.query && req.query.lang) || (req.body && req.body.lang) || 'ru').toLowerCase();
+  return LANGS.includes(l) ? l : 'ru';
+};
+const msg = (lang, key, vars = {}) => (SM[key][lang] || SM[key].ru).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? vars[k] : `{${k}}`));
+class UserError extends Error {}
 
 /* ---------- запуск Python с ограничением параллелизма ---------- */
 let active = 0;
@@ -33,48 +60,48 @@ const queue = [];
 const acquire = () => (active < MAX_PARALLEL ? (active++, Promise.resolve()) : new Promise((r) => queue.push(r)));
 const release = () => { const next = queue.shift(); if (next) next(); else active--; };
 
-function runPython(args) {
+function runPython(args, lang = 'ru') {
   return new Promise((resolve) => {
     const child = spawn(PYTHON, [path.join(ROOT, 'run_aquacrop.py'), ...args], { cwd: ROOT, windowsHide: true });
     let out = '', err = '', done = false;
     const finish = (res) => { if (!done) { done = true; clearTimeout(timer); resolve(res); } };
     const timer = setTimeout(() => {
       child.kill();
-      finish({ ok: false, error: `Расчёт превысил лимит времени (${PY_TIMEOUT_MS / 1000} с)` });
+      finish({ ok: false, error: msg(lang, 'timeout', { s: PY_TIMEOUT_MS / 1000 }) });
     }, PY_TIMEOUT_MS);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('error', (e) => finish({ ok: false, error: `Не удалось запустить Python (${PYTHON}): ${e.message}. Задайте PYTHON_BIN.` }));
+    child.on('error', (e) => finish({ ok: false, error: msg(lang, 'no_python', { py: PYTHON, msg: e.message }) }));
     child.on('close', () => {
       const m = out.match(MARK_RE);
-      if (!m) return finish({ ok: false, error: 'Python не вернул результат', detail: (err || out).slice(-800) });
+      if (!m) return finish({ ok: false, error: msg(lang, 'no_result'), detail: (err || out).slice(-800) });
       try {
         const data = JSON.parse(m[1]);
-        finish(data.success === false ? { ok: false, error: data.error || 'Ошибка расчёта', userError: true } : { ok: true, data });
+        finish(data.success === false ? { ok: false, error: data.error || msg(lang, 'calc_error'), userError: true } : { ok: true, data });
       } catch (e) {
-        finish({ ok: false, error: 'Python вернул некорректный JSON', detail: e.message });
+        finish({ ok: false, error: msg(lang, 'bad_json'), detail: e.message });
       }
     });
   });
 }
 
-async function runPythonQueued(args) {
+async function runPythonQueued(args, lang = 'ru') {
   await acquire();
-  try { return await runPython(args); } finally { release(); }
+  try { return await runPython([...args, '--lang', lang], lang); } finally { release(); }
 }
 
 /* ---------- справочники (кеш сбрасывается при загрузке/удалении файлов) ---------- */
-let configCache = null;
-async function getConfig() {
-  if (configCache) return configCache;
-  const py = await runPythonQueued(['--config']);
+let configCache = {};                               // по языкам
+async function getConfig(lang) {
+  if (configCache[lang]) return configCache[lang];
+  const py = await runPythonQueued(['--config'], lang);
   if (!py.ok) throw new Error(py.error + (py.detail ? `: ${py.detail}` : ''));
-  configCache = py.data;
-  return configCache;
+  configCache[lang] = py.data;
+  return py.data;
 }
 
 /* ---------- ИИ-модель (ONNX) ---------- */
-let ort = null, session = null, meta = null, aiLoadError = null;
+let ort = null, session = null, meta = null, aiLoadError = null;   // aiLoadError: { key, vars }
 
 async function loadModel() {
   try {
@@ -85,10 +112,8 @@ async function loadModel() {
     console.log(`ИИ-модель: ${meta.model || '?'}, год ${meta.target_year}, ${meta.feature_names.length} признаков, R2=${m.r2_test}, RMSE=${m.rmse_test_t_ha} т/га`);
   } catch (e) {
     session = null;
-    aiLoadError = e.code === 'ENOENT'
-      ? 'Нет aquacrop_model.onnx / model_meta.json - запустите python generate_model.py'
-      : `Не удалось загрузить ИИ-модель: ${e.message}`;
-    console.warn('ВНИМАНИЕ:', aiLoadError);
+    aiLoadError = e.code === 'ENOENT' ? { key: 'no_model' } : { key: 'model_load', vars: { msg: e.message } };
+    console.warn('ВНИМАНИЕ:', msg('ru', aiLoadError.key, aiLoadError.vars));
   }
 }
 
@@ -98,25 +123,25 @@ async function predictAI(features) {
   const out = await session.run({ [meta.input_name || session.inputNames[0]]: input });
   const ms = Number(process.hrtime.bigint() - t) / 1e6;
   const v = Number(out[session.outputNames[0]].data[0]);
-  if (!Number.isFinite(v)) throw new Error('ИИ вернул нечисловой результат');
+  if (!Number.isFinite(v)) throw new UserError('ai_nan');
   return { value: Math.round(Math.max(0, v) * 100) / 100, ms };
 }
 
 /* ---------- файлы ---------- */
-function safeName(name) {
+function safeName(name, lang = 'ru') {
   const base = path.basename(String(name || ''));
   const ext = path.extname(base).toLowerCase();
-  if (!EXTENSIONS.includes(ext)) throw new Error(`Можно загружать только ${EXTENSIONS.join(' ').toUpperCase()}`);
+  if (!EXTENSIONS.includes(ext)) throw new Error(msg(lang, 'ext', { list: EXTENSIONS.join(' ').toUpperCase() }));
   if (base.length > 80 || base.startsWith('.') || !/^[\p{L}\p{N} _.()-]+$/u.test(base)) {
-    throw new Error('Имя файла: только буквы, цифры, пробел и символы _ . ( ) -, до 80 символов');
+    throw new Error(msg(lang, 'name'));
   }
   return base;
 }
 
-function fileById(id) {
+function fileById(id, lang) {
   const s = String(id || '');
-  if (s.startsWith('user_files/')) return path.join(USER_DIR, safeName(s.slice('user_files/'.length)));
-  return path.join(ROOT, safeName(s));
+  if (s.startsWith('user_files/')) return path.join(USER_DIR, safeName(s.slice('user_files/'.length), lang));
+  return path.join(ROOT, safeName(s, lang));
 }
 
 /* ---------- HTTP ---------- */
@@ -125,12 +150,14 @@ app.use(express.json({ limit: '4mb' }));
 app.use(express.static(path.join(ROOT, 'public')));
 
 app.get('/api/config', async (req, res) => {
+  const lang = langOf(req);
   try {
-    const cfg = { ...(await getConfig()) };
+    const cfg = { ...(await getConfig(lang)) };
     cfg.ai = session
       ? { available: true, model: meta.model, target_year: meta.target_year, metrics: meta.metrics, speed: meta.speed,
-          n_samples: meta.n_samples, ranges: meta.ranges, files: meta.training_file_names, trained_at: meta.trained_at }
-      : { available: false, reason: aiLoadError };
+          n_samples: meta.n_samples, ranges: meta.ranges, files: meta.training_file_names, trained_at: meta.trained_at,
+          feature_importance: meta.feature_importance, exporter: meta.exporter, categories: meta.categories }
+      : { available: false, reason: msg(lang, aiLoadError ? aiLoadError.key : 'model_off', aiLoadError && aiLoadError.vars) };
     res.json(cfg);
   } catch (e) {
     res.status(503).json({ success: false, error: e.message });
@@ -138,56 +165,60 @@ app.get('/api/config', async (req, res) => {
 });
 
 app.post('/api/files', async (req, res) => {
+  const lang = langOf(req);
   let name;
   try {
-    name = safeName(req.body && req.body.name);
+    name = safeName(req.body && req.body.name, lang);
   } catch (e) {
     return res.status(400).json({ success: false, error: e.message });
   }
   const buf = Buffer.from(String((req.body && req.body.content_b64) || ''), 'base64');
-  if (!buf.length) return res.status(400).json({ success: false, error: 'Пустой файл' });
-  if (buf.length > MAX_UPLOAD_BYTES) return res.status(400).json({ success: false, error: 'Файл больше 2 МБ' });
+  if (!buf.length) return res.status(400).json({ success: false, error: msg(lang, 'empty') });
+  if (buf.length > MAX_UPLOAD_BYTES) return res.status(400).json({ success: false, error: msg(lang, 'too_big') });
 
   fs.mkdirSync(USER_DIR, { recursive: true });
   const target = path.join(USER_DIR, name);
   const backup = fs.existsSync(target) ? fs.readFileSync(target) : null;
   fs.writeFileSync(target, buf);
-  const py = await runPythonQueued(['--validate', target]);
+  const py = await runPythonQueued(['--validate', target], lang);
   if (!py.ok) {                                   // файл не годится - вернуть как было
     if (backup) fs.writeFileSync(target, backup); else fs.rmSync(target, { force: true });
     return res.status(400).json({ success: false, error: py.error });
   }
-  configCache = null;
+  configCache = {};
   res.json({ success: true, replaced: Boolean(backup), ...py.data });
 });
 
 app.delete('/api/files', (req, res) => {
+  const lang = langOf(req);
   const id = String(req.query.id || '');
-  if (!id.startsWith('user_files/')) return res.status(400).json({ success: false, error: 'Удалять можно только загруженные файлы' });
+  if (!id.startsWith('user_files/')) return res.status(400).json({ success: false, error: msg(lang, 'only_user') });
   let p;
-  try { p = fileById(id); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
-  if (!fs.existsSync(p)) return res.status(404).json({ success: false, error: 'Файл не найден' });
+  try { p = fileById(id, lang); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
+  if (!fs.existsSync(p)) return res.status(404).json({ success: false, error: msg(lang, 'not_found') });
   fs.rmSync(p);
-  configCache = null;
+  configCache = {};
   res.json({ success: true });
 });
 
 app.get('/api/files/download', (req, res) => {
+  const lang = langOf(req);
   let p;
-  try { p = fileById(req.query.id); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
-  if (!fs.existsSync(p)) return res.status(404).json({ success: false, error: 'Файл не найден' });
+  try { p = fileById(req.query.id, lang); } catch (e) { return res.status(400).json({ success: false, error: e.message }); }
+  if (!fs.existsSync(p)) return res.status(404).json({ success: false, error: msg(lang, 'not_found') });
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(p))}`);
   res.end(fs.readFileSync(p));
 });
 
 app.post('/api/predict', async (req, res) => {
+  const lang = langOf(req);
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const params = {};
+  const params = { lang };
   for (const k of PARAM_KEYS) if (body[k] !== undefined && body[k] !== '' && body[k] !== null) params[k] = String(body[k]).slice(0, 120);
 
   const t0 = Date.now();
-  const py = await runPythonQueued([JSON.stringify(params)]);
+  const py = await runPythonQueued([JSON.stringify(params)], lang);
   const physicsMs = Date.now() - t0;
   if (!py.ok) {
     if (py.detail) console.error('Ошибка расчёта:', py.detail);
@@ -198,9 +229,9 @@ app.post('/api/predict', async (req, res) => {
   delete result.ai;
   result.ai_yield = null;
   if (!session) {
-    result.ai_error = aiLoadError || 'ИИ-модель не загружена';
+    result.ai_error = msg(lang, aiLoadError ? aiLoadError.key : 'model_off', aiLoadError && aiLoadError.vars);
   } else if (!ai.applicable) {
-    result.ai_error = ai.reason || 'ИИ не применим к выбранным файлам';
+    result.ai_error = ai.reason || msg(lang, 'ai_na');
   } else {
     try {
       const p = await predictAI(ai.features);
@@ -210,7 +241,7 @@ app.post('/api/predict', async (req, res) => {
       result.ai_note = (ai.notes || []).join('; ') || null;
       result.ai_metrics = meta.metrics || null;
     } catch (e) {
-      result.ai_error = e.message;
+      result.ai_error = e instanceof UserError ? msg(lang, e.message) : e.message;
     }
   }
   res.json(result);
