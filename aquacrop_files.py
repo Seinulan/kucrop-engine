@@ -12,10 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from i18n import t
+
 
 def _read(path: Path) -> list[str]:
     if not Path(path).exists():
-        raise FileNotFoundError(f"Не найден файл AquaCrop: {Path(path).name}")
+        raise FileNotFoundError(t("f.not_found", name=Path(path).name))
     # файлы AquaCrop пишутся в Windows-кодировке (знак градуса), строки с CRLF
     return Path(path).read_bytes().decode("latin-1").replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
@@ -131,10 +133,10 @@ def read_cro(path) -> CropFile:
 
     def get(n, kw):
         if n > len(lines):
-            raise ValueError(f"{Path(path).name}: в файле меньше {n} строк - формат не AquaCrop 7.x")
+            raise ValueError(t("f.short", name=Path(path).name, n=n))
         val, desc = lines[n - 1]
         if val is None or kw not in desc.lower():
-            raise ValueError(f"{Path(path).name}, строка {n}: ожидалось '{kw}', найдено '{desc[:70]}'")
+            raise ValueError(t("f.expected", name=Path(path).name, n=n, kw=kw, found=desc[:70]))
         return val
 
     version = get(2, "aquacrop version")
@@ -147,7 +149,7 @@ def read_cro(path) -> CropFile:
 
     calendar = int(params["CalendarType"]) == 1
     if int(params["CalendarType"]) not in (1, 2):
-        raise ValueError(f"{Path(path).name}: неизвестный тип цикла {params['CalendarType']} (1 - дни, 2 - градусо-дни)")
+        raise ValueError(t("f.calendar", name=Path(path).name, v=params['CalendarType']))
 
     # целые значения - целыми
     for k in ("CalendarType", "ETadj", "EmergenceCD", "MaxRootingCD", "SenescenceCD", "MaturityCD",
@@ -175,11 +177,11 @@ def read_cro(path) -> CropFile:
         for n, (attr, kw) in CRO_GDD_MAP.items():
             v = get(n, kw)
             if v <= 0:
-                raise ValueError(f"{Path(path).name}, строка {n}: цикл в градусо-днях, но значение не задано ({v:g})")
+                raise ValueError(t("f.gdd_missing", name=Path(path).name, n=n, v=v))
             params[attr] = v
         params["CalendarType"] = 2
     if params["MaturityCD"] <= 0:
-        raise ValueError(f"{Path(path).name}: не задана длина цикла в днях (строка 55) - нужна для выбора даты уборки")
+        raise ValueError(t("f.no_days", name=Path(path).name))
 
     return CropFile(path=str(path), title=title, version=version, params=params, extra=extra,
                     calendar_days=calendar)
@@ -229,7 +231,7 @@ def read_sol(path) -> SoilFile:
         elif "number of soil horizons" in d:
             n = int(v)
     if cn is None or rew is None or n is None:
-        raise ValueError(f"{Path(path).name}: не найдены CN / REW / число горизонтов")
+        raise ValueError(t("f.sol_head", name=Path(path).name))
 
     horizons = []
     for line in raw:
@@ -242,10 +244,10 @@ def read_sol(path) -> SoilFile:
             continue
         horizons.append(SoilHorizon(*nums, description=" ".join(parts[9:])))
     if len(horizons) != n:
-        raise ValueError(f"{Path(path).name}: заявлено горизонтов {n}, прочитано {len(horizons)}")
+        raise ValueError(t("f.sol_count", name=Path(path).name, n=n, m=len(horizons)))
     for h in horizons:
         if not (0 < h.wp < h.fc < h.sat <= 100):
-            raise ValueError(f"{Path(path).name}: неверные влажности в горизонте '{h.description}'")
+            raise ValueError(t("f.sol_wc", name=Path(path).name, d=h.description))
     return SoilFile(path=str(path), cn=cn, rew=rew, horizons=horizons)
 
 
@@ -296,9 +298,9 @@ def read_gwt(path) -> GroundwaterFile:
             mode = int(v)
             break
     if mode is None:
-        raise ValueError(f"{Path(path).name}: не найден режим грунтовых вод")
+        raise ValueError(t("f.gwt_no_mode", name=Path(path).name))
     if mode not in (0, 1, 2):
-        raise ValueError(f"{Path(path).name}: неизвестный режим грунтовых вод {mode} (0 - нет, 1 - постоянный, 2 - переменный)")
+        raise ValueError(t("f.gwt_mode", name=Path(path).name, m=mode))
     first = {}
     for v, desc in vals[1:10]:
         dl = desc.lower()
@@ -319,14 +321,14 @@ def read_gwt(path) -> GroundwaterFile:
                 except ValueError:
                     pass
     if mode in (1, 2) and not records:
-        raise ValueError(f"{Path(path).name}: нет строк с глубиной грунтовых вод")
+        raise ValueError(t("f.gwt_rows", name=Path(path).name))
     for _, depth, _ in records:
         if not (0 < depth <= 30):
-            raise ValueError(f"{Path(path).name}: глубина {depth} м вне разумных пределов (0-30 м)")
+            raise ValueError(t("f.gwt_depth", name=Path(path).name, d=depth))
     if mode == 2:
         days = [r[0] for r in records]
         if days != sorted(days) or len(set(days)) != len(days):
-            raise ValueError(f"{Path(path).name}: дни наблюдений должны идти по возрастанию без повторов")
+            raise ValueError(t("f.gwt_days", name=Path(path).name))
     return GroundwaterFile(path=str(path), title=title, mode=mode, records=records, first_date=first_date)
 
 
@@ -350,7 +352,7 @@ def read_man(path) -> ManagementFile:
     def find(kw, nth=0):
         hits = [v for v, d in vals if v is not None and kw in d.lower()]
         if len(hits) <= nth:
-            raise ValueError(f"{Path(path).name}: не найдена строка '{kw}'")
+            raise ValueError(t("f.man_kw", name=Path(path).name, kw=kw))
         return hits[nth]
 
     return ManagementFile(
@@ -373,7 +375,7 @@ def read_cli(path) -> dict:
     by_ext = {Path(n).suffix.lower(): n for n in names}
     missing = [e for e in (".tnx", ".eto", ".plu") if e not in by_ext]
     if missing:
-        raise ValueError(f"{Path(path).name}: нет ссылок на {', '.join(missing)}")
+        raise ValueError(t("f.cli_refs", name=Path(path).name, list=', '.join(missing)))
     return {"tnx": by_ext[".tnx"], "eto": by_ext[".eto"], "plu": by_ext[".plu"], "co2": by_ext.get(".co2")}
 
 
@@ -403,12 +405,12 @@ def read_climate_series(path, ncols: int) -> ClimateSeries:
         elif d.startswith("first year"):
             head["year"] = int(v)
     if head.get("kind") != 1:
-        raise ValueError(f"{Path(path).name}: поддерживаются только суточные данные (Daily records = 1)")
+        raise ValueError(t("f.daily", name=Path(path).name))
     if head.get("year", 1901) <= 1901:
-        raise ValueError(f"{Path(path).name}: ряд не привязан к году (First year = 1901) - нужен реальный год")
+        raise ValueError(t("f.year1901", name=Path(path).name))
     sep = next((i for i, l in enumerate(raw[:30]) if l.strip().startswith("=")), None)
     if sep is None:
-        raise ValueError(f"{Path(path).name}: не найдена строка-разделитель '====='")
+        raise ValueError(t("f.sep", name=Path(path).name))
     rows = []
     for i, line in enumerate(raw[sep + 1:], start=sep + 2):
         if not line.strip():
@@ -417,7 +419,7 @@ def read_climate_series(path, ncols: int) -> ClimateSeries:
         try:
             rows.append([float(x) for x in p[:ncols]])
         except ValueError as exc:
-            raise ValueError(f"{Path(path).name}, строка {i}: не число: '{line.strip()}'") from exc
+            raise ValueError(t("f.nan", name=Path(path).name, i=i, s=line.strip())) from exc
         if len(rows[-1]) != ncols:
-            raise ValueError(f"{Path(path).name}, строка {i}: ожидалось {ncols} чисел")
+            raise ValueError(t("f.ncols", name=Path(path).name, i=i, n=ncols))
     return ClimateSeries(path=str(path), title=title, first_date=(head["year"], head["month"], head["day"]), rows=rows)

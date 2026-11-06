@@ -7,6 +7,7 @@ run_aquacrop.py - физический расчёт KUCrop (AquaCrop-OSPy), вы
   python run_aquacrop.py --config     # справочники и значения по умолчанию из файлов (для /api/config)
   python run_aquacrop.py --inspect    # все файлы AquaCrop в проекте и что из них прочитано
   python run_aquacrop.py --validate user_files/X.CRO   # проверка загруженного файла (вызывает сервер)
+  ... --lang kk                                        # язык сообщений: ru (по умолчанию), kk, en
 
 Ответ - JSON между маркерами ---JSON_OUTPUT_START--- / ---JSON_OUTPUT_END---.
 При ошибке: {"success": false, "error": "..."} и код выхода 1. Выдуманных значений нет.
@@ -33,19 +34,30 @@ def inspect():
     except Exception:
         pass
     import aquacrop
-    from kucrop_core import KIND_LABEL, REGION, TARGET_YEAR, library
+    from kucrop_core import TARGET_YEAR, kind_label, library, region
 
     print("Пакет aquacrop:", getattr(aquacrop, "__version__", "версия не указана (см. pip show aquacrop)"))
-    print(f"Регион: {REGION}; целевой год {TARGET_YEAR}\n")
+    print(f"Регион: {region()}; целевой год {TARGET_YEAR}\n")
     for kind, entries in library().items():
         for e in entries:
             src = "загружен" if e["source"] == "user" else "встроен"
             text = e["summary"]["text"] if e["ok"] else "ОШИБКА: " + e["error"]
-            print(f"{KIND_LABEL[kind]:16s} {e['id']:28s} [{src}] {text}")
+            print(f"{kind_label(kind):16s} {e['id']:28s} [{src}] {text}")
+
+
+def _take_lang(args: list) -> list:
+    """--lang xx в любом месте аргументов; язык из JSON-запроса ("lang") - тоже."""
+    from i18n import set_lang
+    if "--lang" in args:
+        i = args.index("--lang")
+        set_lang(args[i + 1] if i + 1 < len(args) else "ru")
+        args = args[:i] + args[i + 2:]
+    return args
 
 
 def main():
-    args = sys.argv[1:]
+    args = _take_lang(sys.argv[1:])
+    from i18n import set_lang, t
     try:
         if args and args[0] == "--config":
             from kucrop_core import config_info
@@ -59,13 +71,15 @@ def main():
             emit({"success": True, **validate_upload(Path(args[1]))})
         raw = json.loads(args[0]) if args else {}
         if not isinstance(raw, dict):
-            raise ValueError("Параметры должны быть JSON-объектом")
+            raise ValueError(t("e.json_object"))
+        if raw.get("lang"):
+            set_lang(str(raw["lang"]))
         from kucrop_core import simulate
         emit(simulate(raw, detail=True))
     except SystemExit:
         raise
     except json.JSONDecodeError:
-        emit({"success": False, "error": "Параметры запроса - некорректный JSON"}, 1)
+        emit({"success": False, "error": t("e.json")}, 1)
     except (ValueError, FileNotFoundError) as exc:       # ошибки ввода / данных: без трейсбэка
         emit({"success": False, "error": str(exc)}, 1)
     except Exception as exc:                              # неожиданное: трейсбэк в stderr, суть в JSON
