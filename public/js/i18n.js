@@ -34,7 +34,7 @@ const D = {
   'guest.initial': ['Г', 'Қ', 'G'],
 
   // единицы
-  'u.tha': ['т/га', 'т/га', 't/ha'], 'u.mm': ['мм', 'мм', 'mm'], 'u.m': ['м', 'м', 'm'], 'u.s': ['с', 'с', 's'],
+  'u.tha': ['т/га', 'т/га', 't/ha'], 'u.cha': ['ц/га', 'ц/га', 'q/ha'], 'u.mm': ['мм', 'мм', 'mm'], 'u.m': ['м', 'м', 'm'], 'u.s': ['с', 'с', 's'],
   'u.ms': ['мс', 'мс', 'ms'], 'u.days': ['дн.', 'күн', 'days'],
 
   // обзор
@@ -58,7 +58,7 @@ const D = {
   'hero.biomass': ['Биомасса', 'Биомасса', 'Biomass'],
   'hero.hi': ['Индекс урожая', 'Өнім индексі', 'Harvest index'],
   'hero.cc': ['Макс. крона', 'Ең жоғары жабын', 'Max canopy'],
-  'hero.ai': ['ИИ: {v} т/га за {ms} мс', 'ЖИ: {v} т/га, {ms} мс', 'AI: {v} t/ha in {ms} ms'],
+  'hero.ai': ['ИИ: {v} т/га ({c} ц/га) за {ms} мс', 'ЖИ: {v} т/га ({c} ц/га), {ms} мс', 'AI: {v} t/ha ({c} q/ha) in {ms} ms'],
   'hero.ai_off': ['ИИ не показан: {r}', 'ЖИ көрсетілмеді: {r}', 'AI not shown: {r}'],
   'hero.ai_flag': ['вне диапазона обучения: {r}', 'оқыту ауқымынан тыс: {r}', 'outside the training range: {r}'],
   'hero.physics': ['Физика AquaCrop: {s} с', 'AquaCrop физикасы: {s} с', 'AquaCrop physics: {s} s'],
@@ -75,7 +75,7 @@ const D = {
   'scen.irr': ['Орошение', 'Суару', 'Irrigation'],
   'scen.init': ['Начальная влажность', 'Бастапқы ылғалдылық', 'Initial soil water'],
   'read.title': ['Как читать результат', 'Нәтижені қалай оқу керек', 'How to read the result'],
-  'read.1': ['Урожай = биомасса × индекс урожая. Это сухое зерно на гектар.', 'Өнім = биомасса × өнім индексі. Бұл гектардағы құрғақ дән.', 'Yield = biomass × harvest index, as dry grain per hectare.'],
+  'read.1': ['Урожай = биомасса × индекс урожая. Это сухое зерно на гектар: 1 т/га = 10 ц/га.', 'Өнім = биомасса × өнім индексі. Бұл гектардағы құрғақ дән: 1 т/га = 10 ц/га.', 'Yield = biomass × harvest index, as dry grain per hectare: 1 t/ha = 10 q/ha (quintals).'],
   'read.2': ['Полоса сезона: чем зеленее день, тем плотнее листья закрывают поле и тем больше воды идёт на рост.',
     'Маусым жолағы: күн неғұрлым жасыл болса, жапырақ егістікті соғұрлым тығыз жабады және өсуге көбірек су жұмсалады.',
     'Season strip: the greener the day, the more the leaves cover the field and the more water goes into growth.'],

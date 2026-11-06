@@ -223,6 +223,7 @@ input[type="date"].ctl::-webkit-calendar-picker-indicator { opacity: .6; cursor:
 .kpi-label i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .kpi-value { margin-top: 8px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
 .kpi-value small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 4px; letter-spacing: 0; }
+.kpi-alt { margin-top: 2px; font-size: 13.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .kpi-sub { margin-top: 6px; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .k-wheat i { background: var(--wheat-fill); } .k-leaf i { background: var(--leaf-fill); } .k-water i { background: var(--water-fill); } .k-soil i { background: var(--soil); }
 
@@ -243,7 +244,9 @@ input[type="date"].ctl::-webkit-calendar-picker-indicator { opacity: .6; cursor:
 .hero-num { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
 .hero-num b { font-size: clamp(54px, 7vw, 76px); font-weight: 700; letter-spacing: -.045em; line-height: 1; color: #f4cf7a; }
 .hero-num span { font-size: 18px; color: var(--hero-muted); font-weight: 500; }
-.strip { margin-top: 20px; }
+.hero-alt { margin-top: 6px; font-size: 15px; color: var(--hero-muted); }
+.hero-alt b { font-size: 24px; font-weight: 650; color: var(--hero-text); letter-spacing: -.01em; }
+.strip { margin-top: 18px; }
 .strip-bar { display: flex; height: 26px; border-radius: 7px; overflow: hidden; background: var(--strip-empty); gap: 1px; }
 .strip-bar i { flex: 1; min-width: 0; transform-origin: bottom; }
 .strip.grow .strip-bar i { animation: rise .5s cubic-bezier(.2, .8, .3, 1) both; }
@@ -257,7 +260,7 @@ input[type="date"].ctl::-webkit-calendar-picker-indicator { opacity: .6; cursor:
 .hero-ai { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 12.5px; color: var(--hero-muted); }
 .hero-ai svg { width: 16px; height: 16px; margin-top: 1px; color: #9fd8b3; }
 .hero-ai.off svg { color: #f4cf7a; }
-.hero.loading .hero-num b, .hero.loading .hero-facts b { color: transparent; background: rgba(255, 255, 255, .1); border-radius: 8px; animation: pulse 1.2s infinite; }
+.hero.loading .hero-num b, .hero.loading .hero-alt b, .hero.loading .hero-facts b { color: transparent; background: rgba(255, 255, 255, .1); border-radius: 8px; animation: pulse 1.2s infinite; }
 
 /* ---------- вкладки ---------- */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 16px; overflow-x: auto; scrollbar-width: none; }

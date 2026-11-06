@@ -6,6 +6,7 @@ import { canopyChart, rainChart } from './charts.js';
 const KIND_ORDER = ['cli', 'crop', 'soil', 'gwt', 'man'];
 const KIND_EXT = { cli: '.CLI', crop: '.CRO', soil: '.SOL', gwt: '.GWT', man: '.MAN', tnx: '.Tnx', eto: '.ETo', plu: '.PLU' };
 const KIND_NAME = { cli: 'env.climate', crop: 'env.crop', soil: 'env.soil', gwt: 'env.gw', man: 'env.man' };
+const cha = (tha) => num(Number(tha) * 10, 1);   // т/га -> ц/га
 const periodText = (r) => { const [a, b] = r.period.split(' - '); return `${fmtDate(a)} – ${fmtDate(b)}`; };
 const baseName = (id) => String(id || '').replace('aquacrop:', '').split('/').pop();
 
@@ -32,20 +33,23 @@ function errorPanel(ctx) {
 function kpis(ctx) {
   const r = ctx.state.result;
   const wb = r && r.water_balance;
-  const cell = (cls, label, value, unit, sub) => el('div', { class: `kpi ${cls}` },
+  const cell = (cls, label, value, unit, sub, alt) => el('div', { class: `kpi ${cls}` },
     el('div', { class: 'kpi-label' }, el('i'), label),
     el('div', { class: 'kpi-value' }, value, unit ? el('small', { text: unit }) : null),
+    alt ? el('div', { class: 'kpi-alt', text: alt }) : null,
     el('div', { class: 'kpi-sub', text: sub || ' ', title: sub || '' }));
   const ai = r && r.ai_yield != null;
   const gwMode = r && ctx.entry('gwt', r.files.gwt);
   const depth = ctx.state.params.gwDepth;
   return el('section', { class: 'kpis', 'aria-label': t('ov.title') },
-    cell('k-wheat', t('kpi.yield'), r ? num(r.yield_tonne_ha) : '—', t('u.tha'), r ? periodText(r) : ''),
+    cell('k-wheat', t('kpi.yield'), r ? num(r.yield_tonne_ha) : '—', t('u.tha'), r ? periodText(r) : '',
+      r ? `${cha(r.yield_tonne_ha)} ${t('u.cha')}` : '\u00a0'),
     cell('k-leaf', t('kpi.ai'), ai ? num(r.ai_yield) : '—', ai ? t('u.tha') : '',
-      ai ? t('kpi.diff', { d: signed(r.ai_yield - r.yield_tonne_ha) }) : r ? t('kpi.ai_off') : ''),
-    cell('k-water', t('kpi.rain'), wb ? num(wb.rain, 0) : '—', t('u.mm'), t('kpi.rain_sub')),
+      ai ? t('kpi.diff', { d: signed(r.ai_yield - r.yield_tonne_ha) }) : r ? t('kpi.ai_off') : '',
+      ai ? `${cha(r.ai_yield)} ${t('u.cha')}` : '\u00a0'),
+    cell('k-water', t('kpi.rain'), wb ? num(wb.rain, 0) : '—', t('u.mm'), t('kpi.rain_sub'), '\u00a0'),
     cell('k-soil', t('kpi.cr'), wb ? num(wb.capillary_rise, 1) : '—', t('u.mm'),
-      gwMode && gwMode.summary && gwMode.summary.mode === 0 ? t('kpi.cr_none') : depth !== '' ? t('kpi.cr_sub', { d: num(depth, 2) }) : ''));
+      gwMode && gwMode.summary && gwMode.summary.mode === 0 ? t('kpi.cr_none') : depth !== '' ? t('kpi.cr_sub', { d: num(depth, 2) }) : '', '\u00a0'));
 }
 
 /* ---------- карточка урожая с полосой сезона ---------- */
@@ -58,6 +62,7 @@ function hero(ctx) {
       el('div', { class: 'hero-period', text: t('calc.wait') }))),
     el('div', { class: 'hero-label', text: t('hero.label') }),
     el('div', { class: 'hero-num' }, el('b', { text: '0,00' }), el('span', { text: t('u.tha') })),
+    el('div', { class: 'hero-alt' }, el('b', { text: '00,0' }), ` ${t('u.cha')}`),
     el('div', { class: 'strip' }, el('div', { class: 'strip-bar' })),
     el('div', { class: 'hero-facts' }, ['hero.biomass', 'hero.hi', 'hero.cc'].map((k) => el('div', {}, el('span', { text: t(k) }), el('b', { text: '0,0' })))));
     return node;
@@ -66,7 +71,8 @@ function hero(ctx) {
   const pd = r.production_details || {};
   const value = el('b', { text: num(r.yield_tonne_ha) });
   const grow = ctx.state.justRan;
-  if (grow) countUp(value, r.yield_tonne_ha, 2);
+  const altValue = el('b', { text: cha(r.yield_tonne_ha) });
+  if (grow) { countUp(value, r.yield_tonne_ha, 2); countUp(altValue, r.yield_tonne_ha * 10, 1); }
 
   const cc = (r.charts && r.charts.canopy_cover) || [];
   const delay = Math.max(2, Math.min(8, 700 / Math.max(1, cc.length)));
@@ -76,7 +82,7 @@ function hero(ctx) {
   }));
   const aiLine = r.ai_yield != null
     ? el('div', { class: 'hero-ai' }, icon('spark'), el('span', {},
-        t('hero.ai', { v: num(r.ai_yield), ms: num(r.ai_ms, r.ai_ms < 1 ? 3 : 1) }), ' · ', t('hero.physics', { s: num(r.physics_ms / 1000, 2) }),
+        t('hero.ai', { v: num(r.ai_yield), c: cha(r.ai_yield), ms: num(r.ai_ms, r.ai_ms < 1 ? 3 : 1) }), ' · ', t('hero.physics', { s: num(r.physics_ms / 1000, 2) }),
         r.ai_note ? el('span', { text: ' · ' + t('hero.ai_flag', { r: r.ai_note }) }) : null))
     : el('div', { class: 'hero-ai off' }, icon('info'), el('span', { text: t('hero.ai_off', { r: r.ai_error || '—' }) }));
 
@@ -87,6 +93,7 @@ function hero(ctx) {
       el('span', { class: 'hero-tag', text: r.irrigation === 'Irrigated' ? t('sim.irrigated') : t('sim.rainfed') })),
     el('div', { class: 'hero-label', text: t('hero.label') }),
     el('div', { class: 'hero-num' }, value, el('span', { text: t('u.tha') })),
+    el('div', { class: 'hero-alt' }, altValue, ` ${t('u.cha')}`),
     el('div', { class: `strip${grow ? ' grow' : ''}`, role: 'img', 'aria-label': t('hero.strip') },
       el('div', { class: 'strip-bar' }, bars),
       el('div', { class: 'strip-axis' }, el('span', { text: fmtDate(start) }), el('span', { text: fmtDate(end) })),
@@ -237,7 +244,8 @@ function production(r) {
     el('div', { class: 'tiles' },
       el('div', { class: 'tile' }, el('span', { text: t('prod.biomass') }), el('b', { text: num(pd.actual_biomass) }), el('small', { text: t('u.tha') })),
       el('div', { class: 'tile' }, el('span', { text: t('prod.hi') }), el('b', { text: `${num(pd.harvest_index, 1)}%` })),
-      el('div', { class: 'tile' }, el('span', { text: t('prod.potential') }), el('b', { text: num(pd.yield_potential) }), el('small', { text: t('u.tha') })),
+      el('div', { class: 'tile' }, el('span', { text: t('kpi.yield') }), el('b', { text: num(r.yield_tonne_ha) }), el('small', { text: `${t('u.tha')} · ${cha(r.yield_tonne_ha)} ${t('u.cha')}` })),
+      el('div', { class: 'tile' }, el('span', { text: t('prod.potential') }), el('b', { text: num(pd.yield_potential) }), el('small', { text: `${t('u.tha')} · ${cha(pd.yield_potential)} ${t('u.cha')}` })),
       el('div', { class: 'tile' }, el('span', { text: t('prod.cc') }), el('b', { text: `${num(pd.max_canopy_cover, 0)}%` }))),
     el('p', { class: 'note', text: t('prod.note') }));
 }
