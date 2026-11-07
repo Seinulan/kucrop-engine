@@ -36,16 +36,20 @@ BASE_DIR = Path(__file__).resolve().parent
 USER_DIR = BASE_DIR / "user_files"
 META_PATH = BASE_DIR / "model_meta.json"
 
-TARGET_YEAR = 2024
-REGION = "Северо-Казахстанская область (СКО), Казахстан"   # на языке запроса: region()
+# Год, на котором обучен ИИ-суррогат (и только он). Физика AquaCrop от него НЕ зависит: сезон считается за любой год,
+# который покрывает выбранный климатический файл (как в настольном AquaCrop).
+TRAIN_YEAR = 2024
+REGION = "Северо-Казахстанская область (СКО), Казахстан"   # регион встроенного примера (Poltavka); на языке запроса: region()
 
 KIND_EXT = {"cli": ".cli", "crop": ".cro", "soil": ".sol", "gwt": ".gwt", "man": ".man",
             "tnx": ".tnx", "eto": ".eto", "plu": ".plu"}
 EXT_KIND = {v: k for k, v in KIND_EXT.items()}
 
 
-def region() -> str:
-    return t("region")
+def region(cli_id: str = None) -> str:
+    """Регион известен только для встроенного примера (Poltavka). У чужого климатического файла в формате
+    AquaCrop региона нет - показываем одну станцию, ничего не выдумывая."""
+    return t("region") if (cli_id or DEFAULTS["cli"]) == DEFAULTS["cli"] else ""
 
 
 def kind_label(kind: str) -> str:
@@ -72,8 +76,7 @@ IRRIGATION = ("Rainfed", "Irrigated")
 INIT_WATER = ("FC", "WP")
 GW_VALID_RANGE = (0.5, 15.0)          # допустимо для расчёта, м
 GW_TRAIN_RANGE = (1.0, 10.0)          # диапазон обучения ИИ, м
-PLANTING_UI = ((4, 1), (7, 31))       # посев можно выбрать в этих пределах целевого года
-PLANTING_TRAIN = ((4, 25), (6, 15))   # окно посева при обучении ИИ
+PLANTING_TRAIN = ((4, 25), (6, 15))   # окно посева при обучении ИИ (для расчёта физикой окно задаёт сам климатический файл)
 HARVEST_MARGIN_DAYS = 10
 IRRIGATION_SMT = 70
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -215,6 +218,16 @@ def load_weather(cli_id: str = None):
     return df.copy(), dict(info)
 
 
+def planting_range(w: dict) -> dict:
+    """Даты посева, доступные для климатического файла: весь период его рядов (как в AquaCrop: климат задаёт, какие
+    годы и даты можно считать). Дата по умолчанию - 25 мая года обучения ИИ, если он есть в файле, иначе последнего полного года."""
+    start, end = date.fromisoformat(w["start"]), date.fromisoformat(w["end"])
+    years = w["years"]
+    year = TRAIN_YEAR if TRAIN_YEAR in years else (years[-1] if years else start.year)
+    default = min(max(date(year, 5, 25), start), end)
+    return {"min": start.isoformat(), "max": end.isoformat(), "default": default.isoformat()}
+
+
 # --------------------------------------------------------------------------- #
 # сводки файлов (для интерфейса, как окна характеристик в AquaCrop)
 # --------------------------------------------------------------------------- #
@@ -263,16 +276,19 @@ def summarize(kind: str, file_id: str) -> dict:
                 "text": t("s.man", m=obj.mulch_pct, f=obj.fertility_stress_pct, w=obj.weed_cover_pct, b=obj.bund_height_m)}
     if kind == "cli":
         df, w = load_weather(file_id)
+        seasons = {}                  # апрель-сентябрь каждого полного года файла
+        for y in w["years"]:
+            s = df[(df.Date >= f"{y}-04-01") & (df.Date <= f"{y}-09-30")]
+            seasons[y] = {"rain": round(float(s.Precipitation.sum()), 1), "eto": round(float(s.ReferenceET.sum()), 1),
+                          "tmean": round(float(((s.MinTemp + s.MaxTemp) / 2).mean()), 1)}
         out = {"station": w["station"], "start": w["start"], "end": w["end"], "years": w["years"], "files": w["files"],
-               "has_target_year": TARGET_YEAR in w["years"]}
-        if out["has_target_year"]:
-            s = df[(df.Date >= f"{TARGET_YEAR}-04-01") & (df.Date <= f"{TARGET_YEAR}-09-30")]
-            out["season"] = {"rain": round(float(s.Precipitation.sum()), 1), "eto": round(float(s.ReferenceET.sum()), 1),
-                             "tmean": round(float(((s.MinTemp + s.MaxTemp) / 2).mean()), 1)}
-            out["text"] = t("s.cli", st=w["station"], a=w["start"], b=w["end"], y=TARGET_YEAR, r=out["season"]["rain"],
-                            e=out["season"]["eto"], tm=out["season"]["tmean"])
+               "planting": planting_range(w), "seasons": seasons}
+        if w["years"]:
+            last = w["years"][-1]
+            out["text"] = t("s.cli", st=w["station"], a=w["start"], b=w["end"], y=last, r=seasons[last]["rain"],
+                            e=seasons[last]["eto"], tm=seasons[last]["tmean"])
         else:
-            out["text"] = t("s.cli_noyear", st=w["station"], a=w["start"], b=w["end"], y=TARGET_YEAR)
+            out["text"] = t("s.cli_noyear", st=w["station"], a=w["start"], b=w["end"])
         return out
     # отдельные ряды погоды
     return {"start": "%04d-%02d-%02d" % obj.first_date, "days": len(obj.rows),
@@ -363,26 +379,28 @@ def normalize_params(raw: dict) -> dict:
     if p["init_water"] not in INIT_WATER:
         raise ValueError(t("e.init_water"))
 
-    p["start"] = _parse_date(raw.get("startDate") or f"{TARGET_YEAR}/05/25")
-    if p["start"].year != TARGET_YEAR:
-        raise ValueError(t("e.year", y=TARGET_YEAR))
-    (m1, d1), (m2, d2) = PLANTING_UI
-    if not (date(TARGET_YEAR, m1, d1) <= p["start"].date() <= date(TARGET_YEAR, m2, d2)):
-        raise ValueError(t("e.window", a=f"{d1:02d}.{m1:02d}.{TARGET_YEAR}", b=f"{d2:02d}.{m2:02d}.{TARGET_YEAR}"))
+    # Год и даты определяет климатический файл, как в настольном AquaCrop: считать можно любой сезон внутри его рядов
+    # (хоть 1990, хоть 2026), если файл их покрывает. Ограничение по году есть только у ИИ - см. ai_block.
+    wstart, wend = pd.Timestamp(w["start"]).to_pydatetime(), pd.Timestamp(w["end"]).to_pydatetime()
+    p["start"] = _parse_date(raw.get("startDate") or planting_range(w)["default"])
+    if not (wstart <= p["start"] <= wend):
+        raise ValueError(t("e.window", cli=Path(f["cli"]).name, a=f"{wstart:%d.%m.%Y}", b=f"{wend:%d.%m.%Y}"))
 
     cf = p["crop_file"]
-    year_end = datetime(TARGET_YEAR, 12, 31)
+    year_end = datetime(p["start"].year, 12, 31)       # сезон считается внутри календарного года посева
+    last_day = min(year_end, wend)                     # и не дальше последнего дня погоды
     p["maturity_date"] = p["start"] + timedelta(days=cf.maturity_days)
     if cf.calendar_days:
         if p["maturity_date"] > year_end:
             raise ValueError(t("e.next_year", crop=Path(f["crop"]).name, n=cf.maturity_days, start=f"{p['start']:%d.%m}",
                                end=f"{p['maturity_date']:%d.%m.%Y}"))
-        p["end"] = min(p["maturity_date"] + timedelta(days=HARVEST_MARGIN_DAYS), year_end)
-    else:   # в градусо-днях длина цикла зависит от погоды - последняя дата уборки 31 декабря
-        p["end"] = year_end
-
-    wstart, wend = pd.Timestamp(w["start"]), pd.Timestamp(w["end"])
-    if p["start"] < wstart or p["end"] > wend:
+        if p["maturity_date"] > last_day:
+            raise ValueError(t("e.season_weather", a=f"{p['start']:%Y-%m-%d}", b=f"{p['maturity_date']:%Y-%m-%d}", cli=f["cli"],
+                               c=w["start"], d=w["end"]))
+        p["end"] = min(p["maturity_date"] + timedelta(days=HARVEST_MARGIN_DAYS), last_day)
+    else:   # в градусо-днях длина цикла зависит от погоды - считаем до 31 декабря (или до конца рядов погоды)
+        p["end"] = last_day
+    if p["end"] <= p["start"]:
         raise ValueError(t("e.season_weather", a=f"{p['start']:%Y-%m-%d}", b=f"{p['end']:%Y-%m-%d}", cli=f["cli"],
                            c=w["start"], d=w["end"]))
 
@@ -657,6 +675,8 @@ def simulate(raw_params: dict, detail: bool = True) -> dict:
                 warns.append(t("w.cr", i=i))
     if not cf.calendar_days and harvest and pd.Timestamp(harvest) >= pd.Timestamp(p["end"]):
         warns.append(t("w.gdd"))
+    if p["gwt_file"].mode == 2 and not p["gwt_file"].overlaps(p["start"], (p["end"] - p["start"]).days + 1):
+        warns.append(t("w.gwt_period", name=Path(f["gwt"]).name))   # файл уровня воды описывает другой период
 
     g = p["gwt_file"]
     if g.mode == 0:
@@ -667,13 +687,14 @@ def simulate(raw_params: dict, detail: bool = True) -> dict:
     else:
         gw_text = t("env.gw_var", name=Path(f["gwt"]).name, n=len(g.records))
     man = p["man_file"]
+    reg = region(f["cli"])
     out = {
         "success": True,
         "yield_tonne_ha": round(yield_val, 2),
-        "location": f"{w['station']} · {region()}",
+        "location": f"{w['station']} · {reg}" if reg else w["station"],
         "station": w["station"],
-        "region": region(),
-        "target_year": TARGET_YEAR,
+        "region": reg,
+        "season_year": p["start"].year,
         "files": f,
         "period": f"{p['start']:%Y/%m/%d} - {harvest or p['end'].strftime('%Y/%m/%d')}",
         "irrigation": p["irrigation"],
@@ -729,15 +750,12 @@ def simulate(raw_params: dict, detail: bool = True) -> dict:
 
 def config_info() -> dict:
     """Для /api/config: библиотека файлов, значения по умолчанию, допустимые даты."""
-    (m1, d1), (m2, d2) = PLANTING_UI
     return to_jsonable({
-        "region": region(),
-        "target_year": TARGET_YEAR,
+        "region": region(),                  # регион встроенного примера
+        "train_year": TRAIN_YEAR,            # год обучения ИИ; даты расчёта физикой задаёт климатический файл (library.cli[*].summary.planting)
         "defaults": DEFAULTS,
         "library": library(),
         "builtin_soils": {fid: soil_label(fid) for fid in BUILTIN_SOILS},
-        "planting": {"min": date(TARGET_YEAR, m1, d1).isoformat(), "max": date(TARGET_YEAR, m2, d2).isoformat(),
-                     "default": date(TARGET_YEAR, 5, 25).isoformat()},
         "groundwater": {"min": GW_TRAIN_RANGE[0], "max": GW_TRAIN_RANGE[1],
                         "valid": list(GW_VALID_RANGE)},
         "upload": {"max_bytes": MAX_UPLOAD_BYTES, "extensions": sorted(KIND_EXT.values())},

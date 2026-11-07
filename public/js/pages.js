@@ -131,7 +131,7 @@ function gwText(ctx, r) {
 /* ================= Обзор ================= */
 function overview(ctx) {
   const s = ctx.state;
-  const y = (s.config && s.config.target_year) || 2024;
+  const y = String(s.params.startDate || '').slice(0, 4);
   const root = el('div', {});
   root.append(head(t('ov.title'), t('ov.lead', { y }),
     el('a', { class: 'btn', href: '#/simulate' }, icon('sliders'), t('ov.change')),
@@ -196,8 +196,26 @@ function paramsPanel(ctx) {
     return `${fmtDate(d.toISOString().slice(0, 10), { day: 'numeric', month: 'long' })}, ${t('sim.cycle', { n: cs.cycle_days })}`;
   };
   const matOut = el('input', { class: 'ctl', id: 'p_mat', readonly: true, value: maturity() });
-  const date = el('input', { class: 'ctl', id: 'p_date', type: 'date', min: c.planting.min, max: c.planting.max, value: p.startDate,
-    on: { change: (e) => { if (e.target.value) { ctx.setParam('startDate', e.target.value); matOut.value = maturity(); } } } });
+  // даты и годы задаёт выбранный климатический файл, как в AquaCrop
+  const pl = ctx.planting();
+  const cl = (ctx.entry('cli', s.selected.cli) || {}).summary;
+  const curYear = Number(p.startDate.slice(0, 4));
+  const years = [...new Set([...((cl && cl.years) || []), curYear])].sort((a, b) => a - b);
+  const yearSel = el('select', { class: 'ctl', id: 'p_year',
+    on: { change: (e) => { ctx.setParam('startDate', ctx.fitDate(ctx.sameDayInYear(p.startDate, Number(e.target.value)), pl)); ctx.render(); } } },
+    years.map((y) => el('option', { value: String(y), selected: y === curYear, text: String(y) })));
+  const sc = cl && cl.seasons && cl.seasons[curYear];
+  const long = { day: 'numeric', month: 'long', year: 'numeric' };
+  const date = el('input', { class: 'ctl', id: 'p_date', type: 'date', min: pl.min, max: pl.max, value: p.startDate,
+    on: {
+      change: (e) => {                      // промежуточные значения при наборе года с клавиатуры не применяем
+        const v = e.target.value;
+        if (!v || v < pl.min || v > pl.max) { e.target.setAttribute('aria-invalid', 'true'); return; }
+        e.target.removeAttribute('aria-invalid');
+        ctx.setParam('startDate', v); ctx.render();
+      },
+      blur: (e) => { if (e.target.value !== p.startDate) { e.target.value = p.startDate; e.target.removeAttribute('aria-invalid'); } },
+    } });
   const gw = el('input', { class: 'ctl', id: 'p_gw', type: 'number', step: '0.1', min: c.groundwater.valid[0], max: c.groundwater.valid[1],
     value: constGw ? p.gwDepth : '', disabled: !constGw, inputMode: 'decimal',
     on: { change: (e) => ctx.setParam('gwDepth', e.target.value) } });
@@ -207,8 +225,10 @@ function paramsPanel(ctx) {
       KIND_ORDER.map((k) => fileSelect(ctx, k))),
     el('div', { class: 'group' },
       el('h4', { text: t('sim.season') }),
+      el('div', { class: 'field' }, el('label', { for: 'p_year', text: t('sim.year') }), yearSel,
+        el('small', { text: sc ? t('sim.season_clim', { y: curYear, r: num(sc.rain, 0), e: num(sc.eto, 0), tm: num(sc.tmean, 1) }) : t('sim.year_hint') })),
       el('div', { class: 'field' }, el('label', { for: 'p_date', text: t('sim.sowing') }), date,
-        el('small', { text: t('sim.window', { a: fmtDate(c.planting.min, { day: 'numeric', month: 'long' }), b: fmtDate(c.planting.max, { day: 'numeric', month: 'long' }) }) })),
+        el('small', { text: t('sim.window', { a: fmtDate(pl.min, long), b: fmtDate(pl.max, long) }) })),
       el('div', { class: 'field' }, el('label', { for: 'p_mat', text: t('sim.maturity') }), matOut)),
     el('div', { class: 'group' },
       el('h4', { text: t('sim.water') }),
@@ -452,7 +472,7 @@ function model(ctx) {
 
   const limits = el('section', { class: 'panel c12' },
     el('div', { class: 'panel-head' }, el('h3', { text: t('limits.title') })),
-    el('ul', { class: 'bullets' }, el('li', { text: t('limits.text') }), el('li', { text: t('model.limit2') }), el('li', { text: t('model.limit3') })),
+    el('ul', { class: 'bullets' }, el('li', { text: t('limits.text', { y }) }), el('li', { text: t('model.limit2') }), el('li', { text: t('model.limit3') })),
     el('p', { class: 'note' }, t('model.retrain').split(':')[0] + ': ', el('code', { text: 'python generate_model.py' })));
 
   root.append(el('div', { class: 'grid' }, speed, table, importance, rules, limits));
@@ -470,6 +490,8 @@ function settings(ctx) {
   const langSeg = el('div', { class: 'seg wide', role: 'group', 'aria-label': t('set.lang') },
     LANGS.map((l) => el('button', { type: 'button', lang: l.code, 'aria-pressed': String(l.code === getLang()), text: l.name, on: { click: () => ctx.changeLang(l.code) } })));
   const c = s.config;
+  const ex = c && (ctx.entry('cli', c.defaults.cli) || {}).summary;
+  const exampleText = ex ? [ex.station, c.region, ex.years && ex.years.length ? `${ex.years[0]}–${ex.years[ex.years.length - 1]}` : ''].filter(Boolean).join(' · ') : '—';
   root.append(el('div', { class: 'grid' },
     el('section', { class: 'panel c7' },
       el('div', { class: 'set-row' }, el('div', {}, el('b', { text: t('set.theme') })), themeSeg),
@@ -482,8 +504,8 @@ function settings(ctx) {
       el('div', { class: 'panel-head' }, el('h3', { text: t('set.about') })),
       el('dl', { class: 'dl' },
         el('dt', { text: t('set.engine') }), el('dd', { text: (s.result && s.result.environment.engine) || 'AquaCrop-OSPy 3.1' }),
-        el('dt', { text: t('set.region') }), el('dd', { text: (c && c.region) || '—' }),
-        el('dt', { text: t('set.year') }), el('dd', { text: String((c && c.target_year) || 2024) }),
+        el('dt', { text: t('set.example') }), el('dd', { text: exampleText }),
+        el('dt', { text: t('set.train_year') }), el('dd', { text: String((c && c.train_year) || '—') }),
         el('dt', { text: t('set.version') }), el('dd', { text: 'KUCrop 3.0 (SaaS)' })))));
   return root;
 }

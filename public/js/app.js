@@ -38,6 +38,29 @@ function validId(kind, id) {
   return Boolean(e && e.ok);
 }
 
+/* Даты посева задаёт выбранный климатический файл (как в настольном AquaCrop): считать можно любой сезон внутри его рядов. */
+export function planting() {
+  const e = entry('cli', state.selected.cli);
+  return (e && e.summary && e.summary.planting) || { min: '1900-01-01', max: '2100-12-31', default: '2024-05-25' };
+}
+
+/** Тот же день и месяц в другом году (29 февраля -> 28 февраля, если года високосного нет). */
+export function sameDayInYear(iso, year) {
+  const [, m, d] = String(iso).split('-').map(Number);
+  const last = new Date(Date.UTC(year, m, 0)).getUTCDate();
+  return `${String(year).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+/** Дата, которая гарантированно попадает в период файла: своя - если подходит, иначе тот же день в году по умолчанию. */
+export function fitDate(date, pl = planting()) {
+  if (date && date >= pl.min && date <= pl.max) return date;
+  if (date) {
+    const near = sameDayInYear(date, Number(pl.default.slice(0, 4)));
+    if (near >= pl.min && near <= pl.max) return near;
+  }
+  return pl.default;
+}
+
 export async function loadConfig() {
   state.config = await api('/api/config');
   const saved = store.get('kucrop.selected', {});
@@ -46,9 +69,8 @@ export async function loadConfig() {
     state.selected[k] = validId(k, want) ? want : state.config.defaults[k];
   }
   const p = { ...store.get('kucrop.params', {}), ...state.params };
-  const pl = state.config.planting;
   state.params = {
-    startDate: p.startDate && p.startDate >= pl.min && p.startDate <= pl.max ? p.startDate : pl.default,
+    startDate: fitDate(p.startDate),
     gwDepth: p.gwDepth != null && p.gwDepth !== '' ? p.gwDepth : fileGwDepth(),
     irrigation: p.irrigation === 'Irrigated' ? 'Irrigated' : 'Rainfed',
     initWater: p.initWater === 'WP' ? 'WP' : 'FC',
@@ -63,6 +85,7 @@ export function fileGwDepth() {
 export function setSelected(kind, id) {
   state.selected[kind] = id;
   if (kind === 'gwt') state.params.gwDepth = fileGwDepth();
+  if (kind === 'cli') state.params.startDate = fitDate(state.params.startDate);   // у другого климата другой период
   store.set('kucrop.selected', state.selected);
   store.set('kucrop.params', state.params);
 }
@@ -178,7 +201,9 @@ let lastPage = null;
 export function render() {
   const page = state.page;
   document.getElementById('pageTitle').textContent = t(`nav.${page}`);
-  document.getElementById('pageSub').textContent = t('top.subtitle', { y: (state.config && state.config.target_year) || 2024 });
+  const cli = state.config && entry('cli', state.selected.cli);
+  document.getElementById('pageSub').textContent = cli && cli.summary
+    ? t('top.subtitle', { st: cli.summary.station, y: String(state.params.startDate || '').slice(0, 4) }) : '';
   document.title = `${t(`nav.${page}`)} · KUCrop`;
   document.querySelectorAll('#nav a').forEach((a) => {
     if (a.dataset.page === page) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -204,7 +229,7 @@ function onRoute() {
   render();
 }
 
-const ctx = { state, api, entries, entry, setSelected, setParam, runSimulation, loadConfig, render, go, setTheme, changeLang, fileGwDepth };
+const ctx = { state, api, entries, entry, setSelected, setParam, runSimulation, loadConfig, render, go, setTheme, changeLang, fileGwDepth, planting, sameDayInYear, fitDate };
 
 /* ---------- запуск ---------- */
 async function boot() {

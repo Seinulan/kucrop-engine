@@ -1,5 +1,12 @@
+.git
+.github
 node_modules
 __pycache__
 *.pyc
-.git
+user_files
+.env
+*.log
 training_data.csv
+requirements-train.txt
+Dockerfile
+.dockerignore

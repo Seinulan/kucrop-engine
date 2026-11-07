@@ -1,5 +1,5 @@
 """
-generate_model.py - обучение ИИ-суррогата поверх физического ядра (целевой год TARGET_YEAR = 2024).
+generate_model.py - обучение ИИ-суррогата поверх физического ядра (год обучения TRAIN_YEAR = 2024; физика считает любой год из климатического файла).
 
   1. Прогоняет N симуляций AquaCrop через ТОТ ЖЕ simulate(), что и сайт:
      культура (final/Wheat/Barley.CRO) x почва x орошение x начальная влажность,
@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from kucrop_core import (BASE_DIR, DEFAULTS, GW_TRAIN_RANGE, INIT_WATER, IRRIGATION, META_PATH, PLANTING_TRAIN,
-                         TARGET_YEAR, TRAIN_CROPS, TRAIN_SOILS, feature_names, make_features, normalize_params,
+                         TRAIN_YEAR, TRAIN_CROPS, TRAIN_SOILS, feature_names, make_features, normalize_params,
                          simulate, training_fingerprint)
 from onnx_export import export, verify
 
@@ -62,7 +62,7 @@ def sample_configs(n: int, seed: int):
     combos = list(itertools.product(TRAIN_CROPS.items(), TRAIN_SOILS.items(), IRRIGATION, INIT_WATER))
     reps = max(1, math.ceil(n / len(combos)))
     (m1, d1), (m2, d2) = PLANTING_TRAIN
-    lo, hi = datetime(TARGET_YEAR, m1, d1), datetime(TARGET_YEAR, m2, d2)
+    lo, hi = datetime(TRAIN_YEAR, m1, d1), datetime(TRAIN_YEAR, m2, d2)
     configs = []
     for (crop, crop_file), (soil, soil_file), irr, iw in combos:
         for _ in range(reps):
@@ -108,7 +108,7 @@ def main():
         print(f"Используются готовые данные: {len(df)} симуляций из training_data.csv")
     else:
         configs = sample_configs(args.n, args.seed)
-        print(f"Обучение ИИ-суррогата: {len(configs)} симуляций AquaCrop, целевой год {TARGET_YEAR}")
+        print(f"Обучение ИИ-суррогата: {len(configs)} симуляций AquaCrop, целевой год {TRAIN_YEAR}")
         rows, failures, t0 = [], [], time.time()
         for i, cfg in enumerate(configs, 1):
             req = {k: v for k, v in cfg.items() if not k.startswith("_")}
@@ -179,7 +179,7 @@ def main():
     meta = {
         "input_name": "float_input",
         "feature_names": names,
-        "target_year": TARGET_YEAR,
+        "target_year": TRAIN_YEAR,
         "categories": {"crop": list(TRAIN_CROPS), "soil": list(TRAIN_SOILS)},
         "training_files": training_fingerprint(),
         "training_file_names": {**DEFAULTS, "crops": TRAIN_CROPS, "soils": TRAIN_SOILS},
@@ -200,8 +200,8 @@ def main():
         "exporter": exporter,
         "onnx_vs_sklearn_max_diff": diff,
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "note": f"Суррогат воспроизводит AquaCrop для {TARGET_YEAR} года и файлов из training_file_names. "
-                "Для других файлов сайт ИИ не показывает.",
+        "note": f"Суррогат воспроизводит AquaCrop для {TRAIN_YEAR} года и файлов из training_file_names. "
+                "Для других файлов и лет сайт ИИ не показывает.",
     }
     META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     speed = meta["speed"]
