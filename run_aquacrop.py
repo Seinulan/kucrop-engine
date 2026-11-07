@@ -34,10 +34,10 @@ def inspect():
     except Exception:
         pass
     import aquacrop
-    from kucrop_core import TARGET_YEAR, kind_label, library, region
+    from kucrop_core import TRAIN_YEAR, kind_label, library, region
 
     print("Пакет aquacrop:", getattr(aquacrop, "__version__", "версия не указана (см. pip show aquacrop)"))
-    print(f"Регион: {region()}; целевой год {TARGET_YEAR}\n")
+    print(f"Пример данных: {region()}; год обучения ИИ {TRAIN_YEAR} (физика считает любой год из климатического файла)\n")
     for kind, entries in library().items():
         for e in entries:
             src = "загружен" if e["source"] == "user" else "встроен"

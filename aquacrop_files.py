@@ -266,14 +266,23 @@ class GroundwaterFile:
     def constant_depth(self):
         return self.records[0][1] if self.mode == 1 and self.records else None
 
-    def daily_depths(self, start, days: int) -> list:
-        """Глубина на каждый день сезона (режим 2: линейная интерполяция, за краями - крайние значения)."""
+    def _offsets(self, start) -> list:
+        """Смещение каждой записи в днях от начала сезона (год 1901 = не привязан к году: берётся год посева)."""
         import datetime as _dt
         y, m, d = self.first_date or (start.year, 1, 1)
         if y <= 1901:
             y = start.year
         base = _dt.date(y, m, d)
-        xs = [(base + _dt.timedelta(days=r[0] - 1) - start.date()).days for r in self.records]
+        return [(base + _dt.timedelta(days=r[0] - 1) - start.date()).days for r in self.records]
+
+    def overlaps(self, start, days: int) -> bool:
+        """Попадают ли записи уровня воды хотя бы частью в период расчёта (режим 2)."""
+        xs = self._offsets(start)
+        return bool(xs) and xs[0] <= days - 1 and xs[-1] >= 0
+
+    def daily_depths(self, start, days: int) -> list:
+        """Глубина на каждый день сезона (режим 2: линейная интерполяция, за краями - крайние значения)."""
+        xs = self._offsets(start)
         ys = [r[1] for r in self.records]
         out = []
         for t in range(days):

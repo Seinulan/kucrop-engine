@@ -147,6 +147,10 @@ function fileById(id, lang) {
 /* ---------- HTTP ---------- */
 const app = express();
 app.use(express.json({ limit: '4mb' }));
+
+// проверка живости для хостинга (Render, Railway, Fly, Hugging Face): мгновенный ответ, Python не запускается
+app.get('/healthz', (req, res) => res.json({ ok: true, ai_loaded: Boolean(session) }));
+
 app.use(express.static(path.join(ROOT, 'public')));
 
 app.get('/api/config', async (req, res) => {
