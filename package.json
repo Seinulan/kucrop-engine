@@ -1,13 +1,18 @@
 {
   "name": "kucrop-engine",
-  "version": "1.0.0",
-  "description": "KUCrop Hybrid Agricultural Simulation Platform",
+  "version": "4.0.0",
+  "description": "KUCrop: веб-версия AquaCrop с ИИ-ускорителем, аккаунтами и историей расчётов",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "python selfcheck.py"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "onnxruntime-node": "^1.18.0"
+    "onnxruntime-node": "^1.18.0",
+    "postgres": "^3.4.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

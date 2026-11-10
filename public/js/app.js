@@ -1,15 +1,18 @@
 // KUCrop: каркас SaaS-приложения — состояние, запросы к серверу, маршруты, тема и язык.
 import { LANGS, getLang, setLang, t } from './i18n.js';
-import { el, icon, store, toast, reducedMotion } from './ui.js';
+import { el, icon, store, toast, reducedMotion, fmtDateTime } from './ui.js';
 import { destroyCharts } from './charts.js';
 import { PAGES } from './pages.js';
 
 const KINDS = ['cli', 'crop', 'soil', 'gwt', 'man'];
-const NAV = [['overview', 'grid'], ['simulate', 'sprout'], ['files', 'file'], ['model', 'chip'], ['settings', 'sliders']];
+const NAV = [['overview', 'grid'], ['simulate', 'sprout'], ['history', 'clock'], ['files', 'file'], ['model', 'chip'], ['settings', 'sliders']];
+const FILE_PARAM = { cli: 'cliFile', crop: 'cropFile', soil: 'soilFile', gwt: 'gwtFile', man: 'manFile' };
 
 export const state = {
   config: null, selected: {}, params: {}, result: null, running: false, error: null,
   offline: false, page: 'overview', simTab: 'crop', justRan: false, themePref: store.get('kucrop.theme', 'system'),
+  user: null, accounts: false, canUpload: true,        // аккаунт: кто вошёл, включены ли аккаунты на сервере
+  history: null, historyLoading: false, authTab: 'signin', authBusy: false, authError: null,
 };
 
 /* ---------- сервер ---------- */
@@ -63,6 +66,10 @@ export function fitDate(date, pl = planting()) {
 
 export async function loadConfig() {
   state.config = await api('/api/config');
+  state.user = state.config.user || null;
+  state.accounts = Boolean(state.config.accounts);
+  state.canUpload = state.config.can_upload !== false;
+  renderWho();
   const saved = store.get('kucrop.selected', {});
   for (const k of KINDS) {
     const want = state.selected[k] || saved[k];
@@ -104,11 +111,14 @@ export async function runSimulation({ quiet = false } = {}) {
     cliFile: state.selected.cli, cropFile: state.selected.crop, soilFile: state.selected.soil,
     gwtFile: state.selected.gwt, manFile: state.selected.man,
     startDate: state.params.startDate.replace(/-/g, '/'), irrigation: state.params.irrigation, initWater: state.params.initWater,
+    save: !quiet && Boolean(state.user),          // в историю попадают только расчёты, запущенные кнопкой
   };
   if (g && g.summary && g.summary.mode === 1 && state.params.gwDepth !== '') body.gwDepth = state.params.gwDepth;
   try {
     state.result = await api('/api/predict', { method: 'POST', body: JSON.stringify(body) });
     state.justRan = true;
+    if (state.result.saved_id) state.history = null;
+    if (state.result.save_error && !quiet) toast(state.result.save_error, true);
   } catch (e) {
     state.error = e.message;
     if (!quiet) toast(e.message, true);
@@ -117,6 +127,88 @@ export async function runSimulation({ quiet = false } = {}) {
     render(); renderStatus();
     state.justRan = false;
   }
+}
+
+/* ---------- аккаунт ---------- */
+async function afterAuthChange() {
+  state.history = null;
+  await loadConfig();                       // у каждого пользователя свои файлы
+  render(); renderStatus();
+  await runSimulation({ quiet: true });     // результат на экране должен соответствовать видимым файлам
+}
+
+export async function signIn(mode, fields) {
+  if (state.authBusy) return;
+  state.authBusy = true; state.authError = null; render();
+  try {
+    const d = await api(mode === 'signup' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: JSON.stringify(fields) });
+    toast(t('auth.welcome', { name: d.user.name || d.user.email }));
+    state.authBusy = false;
+    await afterAuthChange();
+  } catch (e) {
+    state.authBusy = false; state.authError = e.message;
+    render();
+  }
+}
+
+export async function signOut() {
+  try {
+    await api('/api/auth/logout', { method: 'POST', body: '{}' });
+    toast(t('auth.bye'));
+    await afterAuthChange();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- история расчётов ---------- */
+export async function loadHistory() {
+  if (state.historyLoading) return;
+  state.historyLoading = true;
+  try { state.history = await api('/api/simulations'); } catch (e) { state.history = { error: e.message, items: [], total: 0 }; }
+  state.historyLoading = false;
+  if (state.page === 'history' || state.page === 'account') render();
+}
+
+/** Открыть сохранённый расчёт: его параметры становятся текущими, результат показывается как был сохранён. */
+export async function openSaved(id) {
+  try {
+    const it = await api(`/api/simulations/item?id=${encodeURIComponent(id)}`);
+    const p = it.params || {};
+    for (const k of KINDS) if (validId(k, p[FILE_PARAM[k]])) state.selected[k] = p[FILE_PARAM[k]];
+    state.params = {
+      startDate: fitDate(String(p.startDate || '').replace(/\//g, '-')),
+      gwDepth: p.gwDepth != null ? p.gwDepth : fileGwDepth(),
+      irrigation: p.irrigation === 'Irrigated' ? 'Irrigated' : 'Rainfed',
+      initWater: p.initWater === 'WP' ? 'WP' : 'FC',
+    };
+    store.set('kucrop.selected', state.selected);
+    store.set('kucrop.params', state.params);
+    state.result = it.result; state.error = null; state.simTab = 'crop';
+    toast(t('hist.opened', { d: fmtDateTime(it.created_at) }));
+    if (state.page === 'simulate') render(); else go('simulate');
+    renderStatus();
+  } catch (e) { toast(e.message, true); }
+}
+
+export async function deleteSaved(id) {
+  try {
+    await api(id === 'all' ? '/api/simulations?all=1' : `/api/simulations?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast(t(id === 'all' ? 'hist.cleared' : 'hist.deleted'));
+    state.history = null;
+    render();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderWho() {
+  const u = state.user;
+  const initial = u ? (u.name || u.email).trim().charAt(0).toUpperCase() : t('guest.initial');
+  const label = u ? (u.name || u.email) : t('guest.name');
+  document.getElementById('whoAvatar').textContent = initial;
+  document.getElementById('whoName').textContent = label;
+  document.getElementById('whoSub').textContent = u ? u.email : t(state.accounts || !state.config ? 'guest.sub' : 'guest.sub_off');
+  const top = document.getElementById('topAvatar');
+  top.textContent = initial;
+  top.title = `${t('nav.account')}: ${label}`;
+  top.setAttribute('aria-label', top.title);
 }
 
 /* ---------- тема: плавный круг от кнопки (View Transitions), иначе мягкий переход цветов ---------- */
@@ -183,6 +275,7 @@ function applyStatic() {
     on: { click: () => changeLang(l.code) },
   })));
   renderThemeBtn();
+  renderWho();
 }
 
 /* ---------- статус ---------- */
@@ -224,12 +317,14 @@ export function go(page) { location.hash = `#/${page}`; }
 function onRoute() {
   const id = (location.hash.replace(/^#\/?/, '') || 'overview').split('?')[0];
   state.page = PAGES[id] ? id : 'overview';
+  state.authError = null;
   document.getElementById('app').classList.remove('nav-open');
   document.getElementById('menuBtn').setAttribute('aria-expanded', 'false');
   render();
 }
 
-const ctx = { state, api, entries, entry, setSelected, setParam, runSimulation, loadConfig, render, go, setTheme, changeLang, fileGwDepth, planting, sameDayInYear, fitDate };
+const ctx = { state, api, entries, entry, setSelected, setParam, runSimulation, loadConfig, render, go, setTheme, changeLang, fileGwDepth, planting, sameDayInYear, fitDate,
+  signIn, signOut, loadHistory, openSaved, deleteSaved };
 
 /* ---------- запуск ---------- */
 async function boot() {
