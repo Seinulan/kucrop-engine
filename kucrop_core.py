@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import warnings
 from datetime import date, datetime, timedelta
@@ -33,7 +34,8 @@ from i18n import t
 warnings.filterwarnings("ignore")
 
 BASE_DIR = Path(__file__).resolve().parent
-USER_DIR = BASE_DIR / "user_files"
+# Папка со своими (загруженными) файлами. Сервер задаёт её для каждого запроса: у каждого пользователя своя.
+USER_DIR = Path(os.environ.get("KUCROP_USER_DIR") or BASE_DIR / "user_files").resolve()
 META_PATH = BASE_DIR / "model_meta.json"
 
 # Год, на котором обучен ИИ-суррогат (и только он). Физика AquaCrop от него НЕ зависит: сезон считается за любой год,
@@ -319,7 +321,7 @@ def validate_upload(path: Path) -> dict:
     if path.stat().st_size > MAX_UPLOAD_BYTES:
         raise ValueError(t("e.too_big"))
     parse(kind, path)
-    fid = ("user_files/" + path.name) if path.parent == USER_DIR else path.name
+    fid = ("user_files/" + path.name) if path.resolve().parent == USER_DIR else path.name
     if kind in ("cli",):
         try:
             return {"kind": kind, "id": fid, "summary": to_jsonable(summarize(kind, fid)), "complete": True}

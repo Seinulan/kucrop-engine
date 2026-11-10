@@ -43,6 +43,10 @@ const ICONS = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
   drop: '<path d="M12 3.5s6.5 7 6.5 11.5a6.5 6.5 0 0 1-13 0C5.5 10.5 12 3.5 12 3.5z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  user: '<circle cx="12" cy="8.5" r="3.7"/><path d="M4.5 20.5c1-3.8 4-5.8 7.5-5.8s6.5 2 7.5 5.8"/>',
+  logout: '<path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4"/><path d="M10 8l-4 4 4 4M6 12h9"/>',
+  open: '<path d="M5 12h13M12.5 6.5L18 12l-5.5 5.5"/>',
 };
 
 export function icon(name, cls = '') {
@@ -70,6 +74,15 @@ export function fmtDate(iso, opts = { day: 'numeric', month: 'short' }) {
     return `${d.getDate()} ${m}${opts.year ? ` ${d.getFullYear()} ж.` : ''}`;
   }
   try { return new Intl.DateTimeFormat(locale(), opts).format(d); } catch (e) { return d.toISOString().slice(0, 10); }
+}
+
+/** Дата и время события (например, когда сохранён расчёт) в часовом поясе пользователя. */
+export function fmtDateTime(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '—';
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (getLang() === 'kk') return `${d.getDate()} ${KK_SHORT[d.getMonth()]} ${d.getFullYear()} ж., ${hm}`;
+  try { return `${new Intl.DateTimeFormat(locale(), { day: 'numeric', month: 'short', year: 'numeric' }).format(d)}, ${hm}`; } catch (e) { return d.toISOString().slice(0, 16).replace('T', ' '); }
 }
 
 export const store = {

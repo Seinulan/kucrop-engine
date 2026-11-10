@@ -1,6 +1,6 @@
 // Страницы приложения. Каждая страница — функция (ctx) => DOM-узел; ctx даёт состояние и действия из app.js.
 import { LANGS, getLang, t } from './i18n.js';
-import { el, icon, num, signed, fmtDate, countUp, toast } from './ui.js';
+import { el, icon, num, signed, fmtDate, fmtDateTime, countUp, toast } from './ui.js';
 import { canopyChart, rainChart } from './charts.js';
 
 const KIND_ORDER = ['cli', 'crop', 'soil', 'gwt', 'man'];
@@ -386,7 +386,7 @@ function files(ctx) {
   zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
   zone.addEventListener('drop', (e) => { e.preventDefault(); zone.classList.remove('drag'); uploadFiles(ctx, e.dataTransfer.files); });
-  root.append(zone);
+  root.append(s.canUpload ? zone : signInCard(ctx, t('auth.files_need')));
   for (const kind of KIND_ORDER) {
     const list = ctx.entries(kind).map((e) => fileRow(ctx, kind, e));
     if (kind === 'soil') {
@@ -497,17 +497,130 @@ function settings(ctx) {
       el('div', { class: 'set-row' }, el('div', {}, el('b', { text: t('set.theme') })), themeSeg),
       el('div', { class: 'set-row' }, el('div', {}, el('b', { text: t('set.lang') })), langSeg)),
     el('section', { class: 'panel c5' },
-      el('div', { class: 'panel-head' }, el('h3', {}, t('set.account'), el('span', { class: 'soon', text: t('set.soon') }))),
-      el('p', { class: 'panel-sub', text: t('set.account_text') }),
-      el('div', { style: 'margin-top:16px' }, el('button', { type: 'button', class: 'btn', disabled: true }, icon('lock'), t('set.signin')))),
+      el('div', { class: 'panel-head' }, el('h3', { text: t('set.account') })),
+      el('p', { class: 'panel-sub', text: !s.accounts && c ? t('set.account_off') : s.user ? t('set.account_user', { email: s.user.email }) : t('set.account_guest') }),
+      !s.accounts && c ? null : el('div', { style: 'margin-top:16px' },
+        el('button', { type: 'button', class: 'btn', on: { click: () => ctx.go('account') } }, icon('user'), t(s.user ? 'set.open_account' : 'set.signin')))),
     el('section', { class: 'panel c12' },
       el('div', { class: 'panel-head' }, el('h3', { text: t('set.about') })),
       el('dl', { class: 'dl' },
         el('dt', { text: t('set.engine') }), el('dd', { text: (s.result && s.result.environment.engine) || 'AquaCrop-OSPy 3.1' }),
         el('dt', { text: t('set.example') }), el('dd', { text: exampleText }),
         el('dt', { text: t('set.train_year') }), el('dd', { text: String((c && c.train_year) || '—') }),
-        el('dt', { text: t('set.version') }), el('dd', { text: 'KUCrop 3.0 (SaaS)' })))));
+        el('dt', { text: t('set.version') }), el('dd', { text: 'KUCrop 4.0 (SaaS)' })))));
   return root;
 }
 
-export const PAGES = { overview, simulate, files, model, settings };
+/* ================= История расчётов ================= */
+function signInCard(ctx, text) {
+  return el('section', { class: 'panel notice' }, icon('lock'),
+    el('p', { text }),
+    el('button', { type: 'button', class: 'btn primary', on: { click: () => ctx.go('account') } }, icon('user'), t('auth.do_signin')));
+}
+
+function accountsOff() {
+  return el('section', { class: 'panel notice' }, icon('info'),
+    el('div', {}, el('h3', { text: t('auth.off_title') }), el('p', { text: t('set.account_off') })));
+}
+
+function runRow(ctx, it) {
+  return el('div', { class: 'run' },
+    el('div', { class: 'run-main' },
+      el('b', { text: `${it.station || '—'} · ${it.season_year}` }),
+      el('span', { text: fmtDateTime(it.created_at) })),
+    el('div', { class: 'run-meta' },
+      el('span', { class: 'badge', text: it.crop }),
+      el('span', { class: 'badge', text: t('hist.sown', { d: fmtDate(it.start_date, { day: 'numeric', month: 'short', year: 'numeric' }) }) }),
+      el('span', { class: `badge${it.irrigated ? ' user' : ''}`, text: t(it.irrigated ? 'sim.irrigated' : 'sim.rainfed') })),
+    el('div', { class: 'run-yield' },
+      el('b', {}, num(it.yield_t_ha), el('small', { text: ` ${t('u.tha')}` })),
+      el('span', { text: `${cha(it.yield_t_ha)} ${t('u.cha')} · ${it.ai_yield_t_ha == null ? t('hist.ai_none') : t('hist.ai', { v: num(it.ai_yield_t_ha) })}` })),
+    el('div', { class: 'file-actions' },
+      el('button', { type: 'button', class: 'btn', on: { click: () => ctx.openSaved(it.id) } }, t('hist.open')),
+      el('button', { type: 'button', class: 'icon-btn danger', title: t('hist.delete'), on: { click: () => ctx.deleteSaved(it.id) } },
+        icon('trash'), el('span', { class: 'sr-only', text: t('hist.delete') }))));
+}
+
+function history(ctx) {
+  const s = ctx.state;
+  const root = el('div', {});
+  const h = s.history;
+  const canClear = s.user && h && h.total > 0;
+  root.append(head(t('nav.history'), t('hist.lead'),
+    canClear ? el('button', { type: 'button', class: 'btn danger', on: { click: () => { if (confirm(t('hist.clear_confirm', { n: h.total }))) ctx.deleteSaved('all'); } } },
+      icon('trash'), t('hist.clear')) : null,
+    el('button', { type: 'button', class: 'btn primary', on: { click: () => ctx.go('simulate') } }, icon('sprout'), t('nav.simulate'))));
+  if (!s.config) { root.append(s.error ? errorPanel(ctx) : el('p', { class: 'panel-sub', text: t('calc.wait') })); return root; }
+  if (!s.accounts) { root.append(accountsOff()); return root; }
+  if (!s.user) { root.append(signInCard(ctx, t('hist.need'))); return root; }
+  if (!h) {
+    if (!s.historyLoading) ctx.loadHistory();
+    root.append(el('p', { class: 'panel-sub', text: t('hist.loading') }));
+    return root;
+  }
+  if (h.error) {
+    root.append(el('div', { class: 'panel err' }, el('h3', {}, icon('alert'), t('nav.history')), el('p', { text: h.error }),
+      el('button', { type: 'button', class: 'btn', on: { click: () => { s.history = null; ctx.render(); } } }, icon('refresh'), t('err.retry'))));
+    return root;
+  }
+  if (!h.items.length) { root.append(el('section', { class: 'panel notice' }, icon('clock'), el('p', { text: t('hist.empty') }))); return root; }
+  root.append(el('section', { class: 'kind' },
+    el('div', { class: 'kind-head' }, el('h3', { text: t('auth.my_runs') }), el('span', { class: 'cnt', text: t('hist.count', { n: h.total }) })),
+    el('div', { class: 'files' }, h.items.map((it) => runRow(ctx, it)))));
+  return root;
+}
+
+/* ================= Аккаунт ================= */
+function authForm(ctx) {
+  const s = ctx.state;
+  const signup = s.authTab === 'signup';
+  const field = (id, label, props, hint) => el('div', { class: 'field' },
+    el('label', { for: id, text: label }), el('input', { class: 'ctl', id, name: id, ...props }), hint ? el('small', { text: hint }) : null);
+  const form = el('form', { class: 'auth-form', novalidate: true, on: { submit: (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    ctx.signIn(signup ? 'signup' : 'signin', { email: String(f.get('email') || '').trim(), password: String(f.get('password') || ''), name: String(f.get('name') || '').trim() });
+  } } },
+    signup ? field('name', t('auth.name'), { type: 'text', autocomplete: 'name', maxlength: 80 }, t('auth.name_hint')) : null,
+    field('email', t('auth.email'), { type: 'email', autocomplete: 'email', required: true, inputmode: 'email', autocapitalize: 'none', spellcheck: false }),
+    field('password', t('auth.password'), { type: 'password', autocomplete: signup ? 'new-password' : 'current-password', required: true, minlength: 8 },
+      signup ? t('auth.password_hint') : null),
+    s.authError ? el('p', { class: 'auth-error', role: 'alert' }, icon('alert'), el('span', { text: s.authError })) : null,
+    el('button', { type: 'submit', class: 'btn primary big', disabled: s.authBusy },
+      s.authBusy ? el('span', { class: 'spin' }) : icon('user'), t(signup ? 'auth.do_signup' : 'auth.do_signin')));
+  const tabs = el('div', { class: 'seg wide', role: 'group', 'aria-label': t('nav.account') },
+    [['signin', 'auth.signin'], ['signup', 'auth.signup']].map(([v, k]) => el('button', { type: 'button', 'aria-pressed': String(s.authTab === v),
+      on: { click: () => { s.authTab = v; s.authError = null; ctx.render(); } } }, t(k))));
+  return el('section', { class: 'panel auth' }, tabs, form);
+}
+
+function account(ctx) {
+  const s = ctx.state;
+  const root = el('div', {});
+  if (!s.config) { root.append(head(t('nav.account')), s.error ? errorPanel(ctx) : el('p', { class: 'panel-sub', text: t('calc.wait') })); return root; }
+  if (!s.accounts) { root.append(head(t('nav.account')), accountsOff()); return root; }
+  if (!s.user) {
+    root.append(head(t('nav.account'), t('auth.lead_guest')), authForm(ctx));
+    return root;
+  }
+  const u = s.user;
+  if (!s.history && !s.historyLoading) ctx.loadHistory();
+  const nFiles = Object.values(s.config.library).flat().filter((e) => e.source === 'user').length;
+  root.append(head(t('nav.account'), t('auth.lead_user'),
+    el('button', { type: 'button', class: 'btn', on: { click: () => ctx.signOut() } }, icon('logout'), t('auth.signout'))));
+  root.append(el('div', { class: 'grid' },
+    el('section', { class: 'panel c5' },
+      el('div', { class: 'profile' },
+        el('span', { class: 'avatar big', 'aria-hidden': 'true', text: (u.name || u.email).trim().charAt(0).toUpperCase() }),
+        el('div', {}, el('b', { text: u.name || u.email }), el('span', { text: u.email }),
+          el('span', { text: t('auth.since', { d: fmtDate(u.created_at, { day: 'numeric', month: 'long', year: 'numeric' }) }) })))),
+    el('section', { class: 'panel c7' },
+      el('div', { class: 'tiles' },
+        el('button', { type: 'button', class: 'tile link', on: { click: () => ctx.go('files') } },
+          el('span', { text: t('auth.my_files') }), el('b', { text: String(nFiles) }), el('small', { text: t('nav.files') })),
+        el('button', { type: 'button', class: 'tile link', on: { click: () => ctx.go('history') } },
+          el('span', { text: t('auth.my_runs') }), el('b', { text: s.history ? String(s.history.total) : '…' }), el('small', { text: t('nav.history') }))))));
+  return root;
+}
+
+export const PAGES = { overview, simulate, history, files, model, settings, account };

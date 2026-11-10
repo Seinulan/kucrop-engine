@@ -47,10 +47,10 @@
                 <p data-t="limits.short"></p>
                 <a href="#/model" data-t="limits.more"></a>
             </div>
-            <div class="who">
-                <span class="avatar" data-t="guest.initial"></span>
-                <div><b data-t="guest.name"></b><span data-t="guest.sub"></span></div>
-            </div>
+            <a class="who" id="whoBox" href="#/account">
+                <span class="avatar" id="whoAvatar" aria-hidden="true"></span>
+                <div><b id="whoName"></b><span id="whoSub"></span></div>
+            </a>
         </aside>
         <div class="scrim" id="scrim"></div>
 
@@ -66,7 +66,7 @@
                 <span class="pill" id="statusPill" role="status"><span class="dot"></span><span id="statusText"></span></span>
                 <div class="seg" id="langSeg" role="group"></div>
                 <button class="icon-btn theme-btn" id="themeBtn" type="button"></button>
-                <span class="avatar" data-t="guest.initial" aria-hidden="true"></span>
+                <a class="avatar" id="topAvatar" href="#/account"></a>
             </header>
             <main class="content" id="content"></main>
         </div>

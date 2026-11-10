@@ -4,3 +4,4 @@ __pycache__/
 temp_poltavka.txt
 .env
 *.log
+user_files/
