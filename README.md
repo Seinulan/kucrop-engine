@@ -36,7 +36,7 @@ SaaS-приложение: боковое меню, верхняя панель,
  История — сохранённые расчёты пользователя: станция и год, культура, дата посева, урожай AquaCrop и ИИ; расчёт можно открыть снова или удалить.
  Файлы AquaCrop — все .CLI/.CRO/.SOL/.GWT/.MAN и ряды погоды: выбрать, загрузить (можно перетащить), скачать, удалить свои. Свои файлы хранятся в аккаунте.
  ИИ-модель — точность (R², RMSE, по культурам), скорость против физики, важность признаков, файлы обучения, ограничения.
- Аккаунт — регистрация и вход по почте и паролю, профиль, выход.
+ Аккаунт — регистрация и вход по почте и паролю, вход через Google и Facebook, подтверждение почты, сброс пароля, профиль, выход.
  Настройки — тема и язык, состояние аккаунта.
 
 Светлая и тёмная тема (плавный переход от кнопки, по умолчанию — как в системе). Языки RU / KZ / EN: переводится весь интерфейс и сообщения сервера (сводки файлов, ошибки, условия расчёта, причины, почему ИИ не показан). Выбор темы, языка, файлов и параметров запоминается в браузере.
@@ -54,17 +54,22 @@ src/messages.js          тексты сервера RU / KZ / EN, формат 
 src/python.js            запуск физики AquaCrop (очередь, таймаут), кеш справочника
 src/ai.js                ИИ-модель (ONNX)
 src/db.js                подключение к PostgreSQL и миграции
-src/auth.js              аккаунты, пароли, сессии, ограничение попыток входа
+src/auth.js              аккаунты, пароли, сессии, подтверждение почты, сброс пароля, ограничение попыток
+src/oauth.js             вход через Google и Facebook (OAuth 2.0)
+src/mail.js              отправка писем через HTTP-API (Brevo или Resend)
 src/storage.js           файлы AquaCrop (общие встроенные и свои у каждого пользователя)
 src/history.js           история расчётов
 src/routes/*.js          HTTP-маршруты
 db/migrations/*.sql      схема базы; применяется сама при старте сервера
 ```
 
-Таблицы (db/migrations/001_init.sql):
+Таблицы (db/migrations/001_init.sql, 002_oauth_email.sql):
 
 ```
-users        id, email (уникальна без учёта регистра), name, password_hash, created_at
+users        id, email (уникальна без учёта регистра), name, password_hash (нет у входа через Google/Facebook),
+             email_verified_at, created_at
+oauth_accounts  provider (google | facebook), provider_user_id, user_id -> users, email, created_at
+email_tokens    token_hash, user_id -> users, purpose (verify | reset), created_at, expires_at
 sessions     token_hash, user_id -> users, created_at, expires_at
 files        id, user_id -> users, name, kind, content (BYTEA), size_bytes, sha256, created_at, updated_at
 simulations  id, user_id -> users, created_at, params (JSONB), station, crop, start_date, season_year,
@@ -85,13 +90,19 @@ GET    /api/files/download?id=       скачать файл
 POST   /api/auth/register            регистрация: email, password, name
 POST   /api/auth/login               вход: email, password
 POST   /api/auth/logout              выход
+GET    /api/auth/verify?token=       ссылка из письма: почта подтверждена, вход выполнен
+POST   /api/auth/resend              отправить письмо с подтверждением ещё раз
+POST   /api/auth/forgot              письмо со ссылкой для сброса пароля
+POST   /api/auth/reset               новый пароль по ссылке из письма: token, password
+GET    /api/auth/google              вход через Google (возврат на /api/auth/google/callback)
+GET    /api/auth/facebook            вход через Facebook (возврат на /api/auth/facebook/callback)
 GET    /api/auth/me                  кто я, сколько файлов и расчётов
 GET    /api/simulations              история расчётов
 GET    /api/simulations/item?id=     сохранённый расчёт целиком
 DELETE /api/simulations?id=          удалить расчёт; ?all=1 очищает историю
 ```
 
-Безопасность. Пароль хранится только как scrypt-хеш с отдельной солью. Сессия — случайный токен в cookie (HttpOnly, SameSite=Lax, Secure под HTTPS, 30 дней); в базе лежит только SHA-256 токена. Неудачные попытки входа ограничены: 10 за 15 минут на почту. Каждый пользователь видит только свои файлы и расчёты. Все запросы к базе параметризованы.
+Безопасность. Пароль хранится только как scrypt-хеш с отдельной солью. Сессия — случайный токен в cookie (HttpOnly, SameSite=Lax, Secure под HTTPS, 30 дней); в базе лежит только SHA-256 токена. Неудачные попытки входа ограничены: 10 за 15 минут на почту. Каждый пользователь видит только свои файлы и расчёты. Все запросы к базе параметризованы. Ссылки из писем одноразовые (подтверждение 24 часа, сброс пароля 60 минут), в базе лежит только SHA-256 токена; после смены пароля остальные сессии закрываются. При входе через Google или Facebook параметр state сверяется с cookie. К уже существующему аккаунту внешний вход привязывается по почте, только если сервис подтверждает, что почта принадлежит человеку (Google); Facebook этого не сообщает, поэтому с почтой чужого аккаунта войти через него нельзя.
 
 Как хранятся файлы. Встроенные файлы примера лежат в коде и видны всем. Свои файлы пользователя лежат в таблице `files`. Python читает файлы с диска, поэтому сервер выкладывает их из базы в папку `user_files/u_<id>/`; после перезапуска папка восстанавливается из базы, так что на хостинге с временным диском файлы не теряются.
 
@@ -105,6 +116,16 @@ DELETE /api/simulations?id=          удалить расчёт; ?all=1 очи�
 4. Проверить: `https://ваш-сайт/healthz` показывает `"database": true`, в логах Render есть строки «применена миграция 001_init.sql» и «База данных: подключена». Таблицы создаются сами.
 
 Локально: `DATABASE_URL="postgresql://..." node server.js` (в PowerShell: `$env:DATABASE_URL="postgresql://..."; node server.js`). Строку подключения не добавляйте в репозиторий: в ней пароль.
+
+Вход через Google и Facebook, подтверждение почты
+
+Каждый способ включается своими переменными окружения (на Render: сервис → Environment). Пока ключей нет, кнопки не показываются, а регистрация по почте работает без подтверждения, как раньше. Адрес сайта для ссылок берётся из `PUBLIC_URL`; на Render лучше задать его явно: `PUBLIC_URL=https://kucrop-engine.onrender.com`.
+
+Google. В console.cloud.google.com создать проект → APIs & Services → OAuth consent screen (тип External) → Credentials → Create credentials → OAuth client ID → Web application. В Authorized redirect URIs указать `https://ваш-сайт/api/auth/google/callback`. Полученные Client ID и Client secret записать в `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET`. Приложение запрашивает только имя и почту, поэтому проверка Google не нужна и войти может любой пользователь.
+
+Facebook. В developers.facebook.com создать приложение с вариантом использования Facebook Login. В его настройках в Valid OAuth Redirect URIs указать `https://ваш-сайт/api/auth/facebook/callback`. App ID и App Secret записать в `FACEBOOK_APP_ID` и `FACEBOOK_APP_SECRET`. Пока приложение не опубликовано и доступ к public_profile не расширен, войти могут только люди с ролью в приложении.
+
+Почта. Письма идут через HTTP-API: на бесплатном Render почтовые порты (SMTP) закрыты. Нужен аккаунт Brevo или Resend: ключ записать в `BREVO_API_KEY` или `RESEND_API_KEY`, адрес отправителя — в `MAIL_FROM` (имя отправителя: `MAIL_FROM_NAME`, по умолчанию KUCrop). Отправитель должен быть подтверждён в почтовом сервисе; без собственного домена письма могут попадать в спам. Когда почта настроена, новый аккаунт начинает работать после перехода по ссылке из письма, а на странице входа появляется «Забыли пароль?». Аккаунты, созданные раньше, считаются подтверждёнными.
 
 Бесплатный план Neon: 1 ГБ на проект, база засыпает после 5 минут без запросов и просыпается при первом запросе (он идёт на секунду-другую дольше). Лимиты приложения: файл до 2 МБ, до 60 своих файлов и до 200 сохранённых расчётов на пользователя.
 
