@@ -376,6 +376,18 @@ input[type="date"].ctl::-webkit-calendar-picker-indicator { opacity: .6; cursor:
 .auth-form .btn.big { margin-top: 18px; }
 .auth-error { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--danger-soft); color: var(--danger); font-size: 13.5px; }
 .auth-error svg { flex: none; }
+.auth-info { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--surface-2); border: 1px solid var(--line); font-size: 13.5px; }
+.auth-info svg { flex: none; color: var(--ok, var(--wheat)); }
+.auth-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.auth-head svg { width: 22px; height: 22px; color: var(--wheat); flex: none; }
+.auth-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.oauth { display: grid; gap: 10px; margin-top: 18px; }
+.oauth .btn { justify-content: center; text-decoration: none; }
+.auth-or { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: var(--muted); font-size: 12.5px; }
+.auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.auth-or + .auth-form { margin-top: 14px; }
+.link-btn { display: inline-block; margin-top: 14px; padding: 4px 0; background: none; border: 0; font: inherit; font-size: 13.5px; color: var(--muted); text-decoration: underline; cursor: pointer; }
+.link-btn:hover { color: var(--text); }
 .profile { display: flex; align-items: center; gap: 16px; }
 .profile > div { min-width: 0; }
 .profile b { display: block; font-size: 17px; overflow-wrap: anywhere; }

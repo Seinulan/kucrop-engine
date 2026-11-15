@@ -7,6 +7,8 @@ const ai = require('../ai');
 const auth = require('../auth');
 const db = require('../db');
 const history = require('../history');
+const mail = require('../mail');
+const oauth = require('../oauth');
 const storage = require('../storage');
 const { runPythonQueued, getConfig } = require('../python');
 const { route } = require('../http');
@@ -22,6 +24,8 @@ module.exports = (app) => {
     cfg.accounts = db.enabled();
     cfg.user = auth.publicUser(user);
     cfg.can_upload = scope.canWrite;
+    // какие способы входа включены на сервере: кнопки появляются только для настроенных
+    cfg.auth = { google: oauth.configured('google'), facebook: oauth.configured('facebook'), email_confirm: db.enabled() && mail.enabled() };
     res.json(cfg);
   }));
 

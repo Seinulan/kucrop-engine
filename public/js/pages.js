@@ -571,27 +571,98 @@ function history(ctx) {
 }
 
 /* ================= Аккаунт ================= */
+function authMessages(s) {
+  return [
+    s.authError ? el('p', { class: 'auth-error', role: 'alert' }, icon('alert'), el('span', { text: s.authError })) : null,
+    s.authInfo ? el('p', { class: 'auth-info', role: 'status' }, icon('check'), el('span', { text: s.authInfo })) : null,
+  ];
+}
+
+const authField = (id, label, props, hint) => el('div', { class: 'field' },
+  el('label', { for: id, text: label }), el('input', { class: 'ctl', id, name: id, ...props }), hint ? el('small', { text: hint }) : null);
+
+const submitBtn = (s, ic, label) => el('button', { type: 'submit', class: 'btn primary big', disabled: s.authBusy },
+  s.authBusy ? el('span', { class: 'spin' }) : icon(ic), label);
+
+const emailProps = (s) => ({ type: 'email', autocomplete: 'email', required: true, inputmode: 'email', autocapitalize: 'none', value: s.authFields.email || '' });
+
+/** После регистрации при включённом подтверждении почты: ждём перехода по ссылке из письма. */
+function pendingCard(ctx) {
+  const s = ctx.state;
+  return el('section', { class: 'panel auth' },
+    el('div', { class: 'auth-head' }, icon('mail'), el('h3', { text: t('auth.pending_title') })),
+    el('p', { class: 'panel-sub', text: t('auth.pending_text', { email: s.authPending }) }),
+    ...authMessages(s),
+    el('div', { class: 'auth-actions' },
+      el('button', { type: 'button', class: 'btn', disabled: s.authBusy, on: { click: () => ctx.sendAuthMail('resend', s.authPending) } }, icon('refresh'), t('auth.resend')),
+      el('button', { type: 'button', class: 'btn', on: { click: () => { s.authPending = null; s.authTab = 'signin'; s.authError = null; s.authInfo = null; ctx.render(); } } }, t('auth.back'))));
+}
+
+function forgotCard(ctx) {
+  const s = ctx.state;
+  const form = el('form', { class: 'auth-form', novalidate: true, on: { submit: (e) => {
+    e.preventDefault();
+    ctx.sendAuthMail('forgot', String(new FormData(form).get('email') || '').trim());
+  } } },
+    authField('email', t('auth.email'), emailProps(s)),
+    ...authMessages(s),
+    submitBtn(s, 'mail', t('auth.forgot_send')));
+  return el('section', { class: 'panel auth' },
+    el('div', { class: 'auth-head' }, icon('lock'), el('h3', { text: t('auth.forgot_title') })),
+    el('p', { class: 'panel-sub', text: t('auth.forgot_lead') }),
+    form,
+    el('button', { type: 'button', class: 'link-btn', on: { click: () => { s.authTab = 'signin'; s.authError = null; s.authInfo = null; ctx.render(); } } }, t('auth.back')));
+}
+
 function authForm(ctx) {
   const s = ctx.state;
+  const cfg = s.authCfg || {};
+  if (s.authPending) return pendingCard(ctx);
+  if (s.authTab === 'forgot' && cfg.email_confirm) return forgotCard(ctx);
   const signup = s.authTab === 'signup';
-  const field = (id, label, props, hint) => el('div', { class: 'field' },
-    el('label', { for: id, text: label }), el('input', { class: 'ctl', id, name: id, ...props }), hint ? el('small', { text: hint }) : null);
   const form = el('form', { class: 'auth-form', novalidate: true, on: { submit: (e) => {
     e.preventDefault();
     const f = new FormData(form);
     ctx.signIn(signup ? 'signup' : 'signin', { email: String(f.get('email') || '').trim(), password: String(f.get('password') || ''), name: String(f.get('name') || '').trim() });
   } } },
-    signup ? field('name', t('auth.name'), { type: 'text', autocomplete: 'name', maxlength: 80 }, t('auth.name_hint')) : null,
-    field('email', t('auth.email'), { type: 'email', autocomplete: 'email', required: true, inputmode: 'email', autocapitalize: 'none', spellcheck: false }),
-    field('password', t('auth.password'), { type: 'password', autocomplete: signup ? 'new-password' : 'current-password', required: true, minlength: 8 },
+    signup ? authField('name', t('auth.name'), { type: 'text', autocomplete: 'name', maxlength: 80, value: s.authFields.name || '' }, t('auth.name_hint')) : null,
+    authField('email', t('auth.email'), emailProps(s)),
+    authField('password', t('auth.password'), { type: 'password', autocomplete: signup ? 'new-password' : 'current-password', required: true, minlength: 8 },
       signup ? t('auth.password_hint') : null),
-    s.authError ? el('p', { class: 'auth-error', role: 'alert' }, icon('alert'), el('span', { text: s.authError })) : null,
-    el('button', { type: 'submit', class: 'btn primary big', disabled: s.authBusy },
-      s.authBusy ? el('span', { class: 'spin' }) : icon('user'), t(signup ? 'auth.do_signup' : 'auth.do_signin')));
+    ...authMessages(s),
+    submitBtn(s, 'user', t(signup ? 'auth.do_signup' : 'auth.do_signin')));
   const tabs = el('div', { class: 'seg wide', role: 'group', 'aria-label': t('nav.account') },
-    [['signin', 'auth.signin'], ['signup', 'auth.signup']].map(([v, k]) => el('button', { type: 'button', 'aria-pressed': String(s.authTab === v),
-      on: { click: () => { s.authTab = v; s.authError = null; ctx.render(); } } }, t(k))));
-  return el('section', { class: 'panel auth' }, tabs, form);
+    [['signin', 'auth.signin'], ['signup', 'auth.signup']].map(([v, k]) => el('button', { type: 'button', 'aria-pressed': String(s.authTab === v || (v === 'signin' && s.authTab === 'forgot')),
+      on: { click: () => { s.authTab = v; s.authError = null; s.authInfo = null; ctx.render(); } } }, t(k))));
+  // вход через внешние сервисы: кнопки есть только для способов, настроенных на сервере
+  const providers = [['google', 'auth.google'], ['facebook', 'auth.facebook']].filter(([p]) => cfg[p]);
+  const oauth = providers.length ? [
+    el('div', { class: 'oauth' }, providers.map(([p, k]) => el('a', { class: 'btn big', href: `/api/auth/${p}` }, icon('open'), t(k)))),
+    el('div', { class: 'auth-or' }, el('span', { text: t('auth.or_email') })),
+  ] : [];
+  return el('section', { class: 'panel auth' }, tabs, ...oauth, form,
+    !signup && cfg.email_confirm ? el('button', { type: 'button', class: 'link-btn', on: { click: () => { s.authTab = 'forgot'; s.authError = null; s.authInfo = null; ctx.render(); } } }, t('auth.forgot')) : null);
+}
+
+/* ================= Новый пароль по ссылке из письма ================= */
+function reset(ctx) {
+  const s = ctx.state;
+  const root = el('div', {});
+  root.append(head(t('auth.reset_title'), s.resetToken ? t('auth.reset_lead') : null));
+  if (!s.resetToken) {
+    root.append(el('section', { class: 'panel notice' }, icon('alert'), el('p', { text: s.authError || t('auth.reset_bad') }),
+      el('button', { type: 'button', class: 'btn primary', on: { click: () => { s.authTab = 'forgot'; ctx.go('account'); } } }, icon('user'), t('auth.back'))));
+    return root;
+  }
+  const form = el('form', { class: 'auth-form', novalidate: true, on: { submit: (e) => {
+    e.preventDefault();
+    ctx.resetPassword(String(new FormData(form).get('password') || ''));
+  } } },
+    authField('password', t('auth.password'), { type: 'password', autocomplete: 'new-password', required: true, minlength: 8 }, t('auth.password_hint')),
+    ...authMessages(s),
+    submitBtn(s, 'lock', t('auth.reset_save')));
+  root.append(el('section', { class: 'panel auth' }, form));
+  return root;
 }
 
 function account(ctx) {
@@ -612,7 +683,7 @@ function account(ctx) {
     el('section', { class: 'panel c5' },
       el('div', { class: 'profile' },
         el('span', { class: 'avatar big', 'aria-hidden': 'true', text: (u.name || u.email).trim().charAt(0).toUpperCase() }),
-        el('div', {}, el('b', { text: u.name || u.email }), el('span', { text: u.email }),
+        el('div', {}, el('b', { text: u.name || u.email }), el('span', { text: u.verified === false && s.authCfg.email_confirm ? `${u.email} · ${t('auth.unverified')}` : u.email }),
           el('span', { text: t('auth.since', { d: fmtDate(u.created_at, { day: 'numeric', month: 'long', year: 'numeric' }) }) })))),
     el('section', { class: 'panel c7' },
       el('div', { class: 'tiles' },
@@ -623,4 +694,4 @@ function account(ctx) {
   return root;
 }
 
-export const PAGES = { overview, simulate, history, files, model, settings, account };
+export const PAGES = { overview, simulate, history, files, model, settings, account, reset };

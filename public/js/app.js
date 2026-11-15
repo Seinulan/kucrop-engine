@@ -1,5 +1,5 @@
 // KUCrop: каркас SaaS-приложения — состояние, запросы к серверу, маршруты, тема и язык.
-import { LANGS, getLang, setLang, t } from './i18n.js';
+import { LANGS, getLang, setLang, t, has } from './i18n.js';
 import { el, icon, store, toast, reducedMotion, fmtDateTime } from './ui.js';
 import { destroyCharts } from './charts.js';
 import { PAGES } from './pages.js';
@@ -13,6 +13,8 @@ export const state = {
   offline: false, page: 'overview', simTab: 'crop', justRan: false, themePref: store.get('kucrop.theme', 'system'),
   user: null, accounts: false, canUpload: true,        // аккаунт: кто вошёл, включены ли аккаунты на сервере
   history: null, historyLoading: false, authTab: 'signin', authBusy: false, authError: null,
+  authCfg: {},                 // какие способы входа включены на сервере: google, facebook, email_confirm
+  authFields: { email: '', name: '' }, authPending: null, authInfo: null, resetToken: null,
 };
 
 /* ---------- сервер ---------- */
@@ -27,7 +29,11 @@ export async function api(path, opts = {}) {
   }
   state.offline = false;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok || data.success === false) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.code = data.code || null;          // код ошибки сервера (need_verify и т. п.)
+    throw err;
+  }
   return data;
 }
 
@@ -69,6 +75,7 @@ export async function loadConfig() {
   state.user = state.config.user || null;
   state.accounts = Boolean(state.config.accounts);
   state.canUpload = state.config.can_upload !== false;
+  state.authCfg = state.config.auth || {};
   renderWho();
   const saved = store.get('kucrop.selected', {});
   for (const k of KINDS) {
@@ -132,6 +139,7 @@ export async function runSimulation({ quiet = false } = {}) {
 /* ---------- аккаунт ---------- */
 async function afterAuthChange() {
   state.history = null;
+  state.authTab = 'signin'; state.authPending = null; state.authError = null; state.authInfo = null;   // форма входа - с чистого листа
   await loadConfig();                       // у каждого пользователя свои файлы
   render(); renderStatus();
   await runSimulation({ quiet: true });     // результат на экране должен соответствовать видимым файлам
@@ -139,14 +147,46 @@ async function afterAuthChange() {
 
 export async function signIn(mode, fields) {
   if (state.authBusy) return;
-  state.authBusy = true; state.authError = null; render();
+  state.authFields = { email: fields.email, name: fields.name || '' };       // чтобы ошибка не стирала введённое
+  state.authBusy = true; state.authError = null; state.authInfo = null; render();
   try {
     const d = await api(mode === 'signup' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: JSON.stringify(fields) });
-    toast(t('auth.welcome', { name: d.user.name || d.user.email }));
     state.authBusy = false;
+    if (d.pending) { state.authPending = d.email; render(); return; }        // ждём перехода по ссылке из письма
+    toast(t('auth.welcome', { name: d.user.name || d.user.email }));
+    await afterAuthChange();
+  } catch (e) {
+    state.authBusy = false;
+    if (e.code === 'need_verify') state.authPending = fields.email; else state.authError = e.message;
+    render();
+  }
+}
+
+/** Письма: повторное подтверждение ('resend') и сброс пароля ('forgot'). Ответ сервера одинаков для любой почты. */
+export async function sendAuthMail(kind, email) {
+  if (state.authBusy) return;
+  state.authFields = { ...state.authFields, email };
+  state.authBusy = true; state.authError = null; state.authInfo = null; render();
+  try {
+    await api(`/api/auth/${kind}`, { method: 'POST', body: JSON.stringify({ email }) });
+    state.authInfo = t(kind === 'forgot' ? 'auth.forgot_sent' : 'auth.resent');
+  } catch (e) { state.authError = e.message; }
+  state.authBusy = false;
+  render();
+}
+
+export async function resetPassword(password) {
+  if (state.authBusy) return;
+  state.authBusy = true; state.authError = null; render();
+  try {
+    const d = await api('/api/auth/reset', { method: 'POST', body: JSON.stringify({ token: state.resetToken, password }) });
+    state.authBusy = false; state.resetToken = null;
+    toast(t('auth.reset_done', { name: d.user.name || d.user.email }));
+    go('account');
     await afterAuthChange();
   } catch (e) {
     state.authBusy = false; state.authError = e.message;
+    if (e.code === 'bad_token') state.resetToken = null;
     render();
   }
 }
@@ -314,17 +354,30 @@ export function render() {
 
 export function go(page) { location.hash = `#/${page}`; }
 
+/** Параметры после «?» в адресе: результат входа через Google/Facebook, подтверждения почты, ссылка сброса пароля. */
+function takeRouteQuery(id, q) {
+  if (id === 'reset' && q.get('token')) state.resetToken = q.get('token');
+  if (id === 'account') {
+    const code = q.get('error');
+    if (code) { state.authError = has(`auth.err.${code}`) ? t(`auth.err.${code}`) : t('auth.err.oauth_failed'); state.authPending = null; }
+    if (q.get('verified')) { toast(t('auth.verified')); state.authPending = null; }
+    if (q.get('signed')) toast(t('auth.signed', { p: q.get('signed') === 'google' ? 'Google' : 'Facebook' }));
+  }
+  history.replaceState(null, '', `#/${id}`);            // токен и коды не остаются в адресе и истории браузера
+}
+
 function onRoute() {
-  const id = (location.hash.replace(/^#\/?/, '') || 'overview').split('?')[0];
+  const [id, qs] = (location.hash.replace(/^#\/?/, '') || 'overview').split('?');
   state.page = PAGES[id] ? id : 'overview';
-  state.authError = null;
+  state.authError = null; state.authInfo = null;
+  if (qs) takeRouteQuery(state.page, new URLSearchParams(qs));
   document.getElementById('app').classList.remove('nav-open');
   document.getElementById('menuBtn').setAttribute('aria-expanded', 'false');
   render();
 }
 
 const ctx = { state, api, entries, entry, setSelected, setParam, runSimulation, loadConfig, render, go, setTheme, changeLang, fileGwDepth, planting, sameDayInYear, fitDate,
-  signIn, signOut, loadHistory, openSaved, deleteSaved };
+  signIn, signOut, sendAuthMail, resetPassword, loadHistory, openSaved, deleteSaved };
 
 /* ---------- запуск ---------- */
 async function boot() {
