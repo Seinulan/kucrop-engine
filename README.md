@@ -37,67 +37,6 @@ python generate_model.py                 *по желанию, переобуч�
 
 Светлая и тёмная тема (плавный переход от кнопки, по умолчанию — как в системе). Языки RU / KZ / EN: переводится весь интерфейс и сообщения сервера (сводки файлов, ошибки, условия расчёта, причины, почему ИИ не показан). Выбор темы, языка, файлов и параметров запоминается в браузере.
 
-Гость может считать встроенный пример без входа. Чтобы загружать свои файлы и сохранять расчёты, нужен аккаунт.
-
-Бэкенд и база данных
-
-Бэкенд: Node.js + Express, физику считает Python, данные хранит PostgreSQL (подходит Neon и любой другой). Сервер разбит на модули:
-
-```
-server.js                точка входа: собирает приложение
-src/config.js            настройки и лимиты
-src/messages.js          тексты сервера RU / KZ / EN, формат ошибок
-src/python.js            запуск физики AquaCrop (очередь, таймаут), кеш справочника
-src/ai.js                ИИ-модель (ONNX)
-src/db.js                подключение к PostgreSQL и миграции
-src/auth.js              аккаунты, пароли, сессии, подтверждение почты, сброс пароля, ограничение попыток
-src/oauth.js             вход через Google и Facebook (OAuth 2.0)
-src/mail.js              отправка писем через HTTP-API (Brevo или Resend)
-src/storage.js           файлы AquaCrop (общие встроенные и свои у каждого пользователя)
-src/history.js           история расчётов
-src/routes/*.js          HTTP-маршруты
-db/migrations/*.sql      схема базы; применяется сама при старте сервера
-```
-
-Таблицы (db/migrations/001_init.sql, 002_oauth_email.sql):
-
-```
-users        id, email (уникальна без учёта регистра), name, password_hash (нет у входа через Google/Facebook),
-             email_verified_at, created_at
-oauth_accounts  provider (google | facebook), provider_user_id, user_id -> users, email, created_at
-email_tokens    token_hash, user_id -> users, purpose (verify | reset), created_at, expires_at
-sessions     token_hash, user_id -> users, created_at, expires_at
-files        id, user_id -> users, name, kind, content (BYTEA), size_bytes, sha256, created_at, updated_at
-simulations  id, user_id -> users, created_at, params (JSONB), station, crop, start_date, season_year,
-             irrigated, yield_t_ha, ai_yield_t_ha, result (JSONB)
-```
-
-При удалении пользователя его сессии, файлы и расчёты удаляются каскадом.
-
-API:
-
-```
-GET    /healthz                      жив ли сервер, загружен ли ИИ, подключена ли база
-GET    /api/config                   библиотека файлов и сводки, значения по умолчанию, метрики ИИ, текущий пользователь
-POST   /api/predict                  расчёт AquaCrop + прогноз ИИ; save: true сохраняет расчёт в историю
-POST   /api/files                    загрузить файл AquaCrop (при подключённой базе нужен вход)
-DELETE /api/files?id=                удалить свой файл
-GET    /api/files/download?id=       скачать файл
-POST   /api/auth/register            регистрация: email, password, name
-POST   /api/auth/login               вход: email, password
-POST   /api/auth/logout              выход
-GET    /api/auth/verify?token=       ссылка из письма: почта подтверждена, вход выполнен
-POST   /api/auth/resend              отправить письмо с подтверждением ещё раз
-POST   /api/auth/forgot              письмо со ссылкой для сброса пароля
-POST   /api/auth/reset               новый пароль по ссылке из письма: token, password
-GET    /api/auth/google              вход через Google (возврат на /api/auth/google/callback)
-GET    /api/auth/facebook            вход через Facebook (возврат на /api/auth/facebook/callback)
-GET    /api/auth/me                  кто я, сколько файлов и расчётов
-GET    /api/simulations              история расчётов
-GET    /api/simulations/item?id=     сохранённый расчёт целиком
-DELETE /api/simulations?id=          удалить расчёт; ?all=1 очищает историю
-```
-
 Ограничения
 
 1. ИИ воспроизводит физику для года и файлов обучения (2024). Прогнозом урожая на другие годы он не является. Основной расчёт физикой AquaCrop работает для любого года, который есть в климатическом файле.
